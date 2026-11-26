@@ -1,7 +1,16 @@
-# 文索 AxcWenSuo —— 需求文档 v0.1
+# 文索 AxcWenSuo —— 需求文档 v1.0
 
-> 中文优先、不起服务、目录即知识库的本地 RAG 引擎。人和 agent 共用同一个内核。
 > 项目名 `AxcWenSuo`，发布包名 `axc-wensuo`，导入名 `axc_wensuo`，命令行 `ws`，知识库配置文件 `wensuo.yaml`。文：文档，索：检索与索引。
+>
+> 本文档是开发的唯一依据，读者包括人和 AI 开发者。文中"必须"是硬性要求，"默认"是可配置的初始值，"不做"是明确排除的范围。本文没有写到的行为，按第 3 节设计原则处理；仍无法判断的，在代码中显式报错，不自行发明行为。
+
+---
+
+## 0. 目的（一句话）
+
+**把任意一个本地文档目录变成可离线检索的知识库：不起服务、没有构建步骤、中文检索准确、每条结果可追溯到原文位置；人用命令行查，AI agent 用 MCP 或 JSON 查。**
+
+一次性交付，不分期。
 
 ---
 
@@ -9,10 +18,12 @@
 
 ### 1.1 要解决的问题
 
-个人或团队的知识（技术文档、数据字典、操作手册、规章制度、笔记）分散在 Markdown、PDF、Word、Excel 里，需要：
+个人的知识（技术文档、数据字典、操作手册、规章制度、笔记）分散在 Markdown、PDF、Word、Excel 里，需要：
 
 - **人**：随手搜到答案和出处。
 - **agent**（Claude Code、Kiro、Codex 等）：在写代码、排查问题时按需检索，拿到可引用的原文。
+
+使用形态是**单机、单用户**：知识库就是本机上的一个目录。多人共享时，共享的是文档目录本身（例如放进 git 或网盘），每台机器各自建索引。
 
 ### 1.2 现有方案的缺口
 
@@ -41,24 +52,33 @@
 
 ---
 
-## 2. 目标与非目标
+## 2. 目标与不做
 
-### 2.1 目标
+### 2.1 目标（每条都有对应验收，见第 11 节）
 
-1. **不起服务**：作为 Python 库和命令行运行在调用方进程里；索引就是本地一个目录，可删可重建。
-2. **目录即知识库，没有构建步骤**：放进或改动文件，下一次查询前自动增量同步。
-3. **中文优先**：中文关键词检索效果不低于第 1.3 节的"单字 + 相邻两字"基线；中英混排和代码标识符同样可检索。
-4. **分数可信**：相关性分数是校准过的概率，阈值有明确含义；无答案时返回空。
-5. **人和 agent 一套内核**：命令行（文本与 JSON）、MCP（stdio）、Python API、终端对话界面，可选按需启动的本地网页。
-6. **低资源**：核心检索在单核 CPU 上可用，不强依赖 GPU 和 torch。
-7. **引用可追溯**：每条结果都能定位到文件、页码或行号、章节路径、表格位置。
+| 编号 | 目标 | 验收 |
+| --- | --- | --- |
+| G1 | 不起服务：作为 Python 库和命令行运行在调用方进程里，MCP 由 agent 客户端按需拉起（stdio），没有常驻进程 | A-01、A-02 |
+| G2 | 目录即知识库：放入、修改、删除文件后，下一次查询前自动增量同步，用户不需要执行任何构建命令 | A-03 ~ A-06 |
+| G3 | 中文检索准确：关键词检索效果不低于第 1.3 节"单字 + 相邻两字 + 标识符拆分"基线；中英混排、代码标识符可检索 | A-07 ~ A-09、Q-01、Q-02 |
+| G4 | 按专题检索：每篇文档属于一个专题（scope），检索可按专题、路径、标签、文件类型过滤 | A-10、A-11 |
+| G5 | 结果可追溯：每条结果带文件路径、章节路径、行号或页码或工作表行号 | A-12 ~ A-14 |
+| G6 | 人和 agent 共用一个内核：命令行（文本、JSON）、MCP、Python API 三个入口，检索结果完全一致 | A-15 ~ A-17 |
+| G7 | 低资源：单核 CPU 可用，运行时不依赖 torch 和 GPU，不需要网络（模型下载后） | N-01 ~ N-08 |
+| G8 | 知道"查不到"：结果里明确标出查询中的标识符是否在知识库出现过；配置了重排模型时，低于阈值返回空；查不到的查询记入缺口清单 | A-18 ~ A-21、Q-03 |
 
-### 2.2 非目标（v1 不做）
+### 2.2 不做
 
-- 多用户、权限、在线协作、常驻 Web 服务。
-- 训练模型（只消费模型；模型训练在独立项目里）。
-- 知识图谱式 RAG（入库要大量大模型调用，成本和可控性不符合定位）。
-- 千万级规模（v1 目标是十万段以内）。
+以下内容不实现，代码里也不预留空接口：
+
+- 大模型问答（`ask`）、终端对话界面、网页界面。大模型通过 MCP 自己调用检索即可。
+- 后台常驻服务、文件监听（watch）、多用户、权限。
+- 自动给文档归类专题（专题只由第 5.3 节规则决定）。
+- 扫描件和图片的文字识别（OCR）。扫描版 PDF 解析出空文本时，按"解析结果为空"记录。
+- `.doc`、`.xls`、`.ppt` 等旧版二进制 Office 格式。
+- LanceDB 等外部存储、近似向量索引。规模上限是 10 万段。
+- 训练模型。本项目只使用模型。
+- 自带重排模型。重排是可选组件，用户自己提供模型目录（格式见第 7.4 节）。
 
 ---
 
@@ -66,234 +86,456 @@
 
 | 原则 | 含义 |
 | --- | --- |
-| 库优先 | 一切能力先是函数接口，命令行、MCP、网页都是薄壳 |
-| 目录是唯一事实来源 | 索引是派生物；删掉索引，下次查询自动重建，结果一致 |
-| 显式失败 | 缺模型、缺依赖、解析失败都明确报错并记录，不静默回退到差的方案 |
-| 组件可替换 | 解析器、分词器、向量模型、重排模型、存储后端都通过注册表按名字选择（借鉴 txtai） |
-| 结构化保真 | 解析结果保留标题层级、表格结构、页码（借鉴 haiku.rag 的 Docling 文档模型） |
-| 可评测 | 自带评测工具和查询集格式，任何改动都能用同一套数据回归 |
-| 依赖分层 | 核心只依赖 numpy、onnxruntime、tokenizers、PyYAML；PDF、Office 解析、文字识别、大模型问答都是可选扩展 |
+| 库优先 | 所有能力先是 Python 函数；命令行和 MCP 只做参数解析和输出格式化，不含检索逻辑 |
+| 目录是唯一事实来源 | 索引是派生物；删掉索引目录，下次查询自动重建，结果与重建前一致 |
+| 显式失败 | 缺模型、缺可选依赖、配置非法时报错并给出修复方法；不静默回退到其他方案。单个文件解析失败不影响整库，但必须记录并在 `ws doctor` 中显示 |
+| 确定性 | 同一份文档、同一配置、同一模型，检索结果顺序完全一致。所有排序在分数相同时按 `chunk_id` 升序打破平局 |
+| 依赖分层 | 核心依赖只有 numpy、onnxruntime、tokenizers、PyYAML、filelock；PDF 与 Office 解析放在 `docs` 扩展，MCP 放在 `mcp` 扩展 |
 
 ---
 
-## 4. 用户与场景
+## 4. 术语
 
-| 角色 | 场景 | 入口 |
-| --- | --- | --- |
-| 人 | 搜"某个配置项的默认值是多少"，看原文和出处 | `ws search`、`ws chat`（终端对话） |
-| 人 | 把一个文件夹的制度 PDF 当知识库问答 | `ws --root ~/制度 ask "出差报销时限"` |
-| agent | 写代码前查接口说明、参数取值 | MCP 工具 `search`、`read`，或 `ws search --format json` |
-| agent | 判断知识库里有没有某个内容 | `search` 返回空 + 记入缺口清单 |
-| 维护者 | 看哪些问题没答案、哪些文件解析失败 | `ws gaps`、`ws doctor` |
-| 维护者 | 改了检索策略，验证有没有变差 | `ws eval` |
+| 术语 | 定义 |
+| --- | --- |
+| 知识库（KB） | 一个根目录（root）及其下被收纳的文件 |
+| 文档（doc） | 一个被收纳的文件。`doc_id` = 相对根目录的路径，统一用 `/` 分隔，做 Unicode NFC 归一 |
+| 专题（scope） | 文档所属的分类名，每篇文档恰好一个，规则见第 5.3 节 |
+| 段（chunk） | 检索和返回的最小单位，由切段规则产生 |
+| 章节路径（title_path） | 段所在的标题链，例如 `["部署指南", "环境变量"]` |
+| 标识符（identifier） | 提取：查询做 NFKC 归一并转小写后，取连续的 `[a-z0-9_.\-]` 串，去掉首尾的 `.` 和 `-`；剩余串满足"长度 ≥ 3 且含字母"或"含 `_` 或 `.`"即为标识符，去重后按首次出现顺序排列。例：`查 user_id.` → `user_id`；`v2.1`、`max_pt` 是标识符，`id`、`42` 不是 |
+| 标识符命中 | 对段的 `index_text` 做 NFKC 归一并转小写后，标识符作为子串出现，且出现位置的前一个和后一个字符都不是 `[a-z0-9_]`（或位于文本边界）。例：`user_id` 命中 `表 user_id 字段`，不命中 `user_ids`；`user` 不命中 `user_id` |
+| 索引目录 | 存放索引的目录，默认 `<root>/.wensuo/` |
 
 ---
 
-## 5. 功能需求
+## 5. 知识库与收纳
 
-### 5.1 知识库与收纳（FR-1xx）
+### 5.1 打开知识库
 
-- **FR-101** 一个知识库 = 一个根目录 + 一份 `wensuo.yaml`（可选）。没有配置文件时用默认值，任意目录都能直接当知识库。
-- **FR-102** 收纳规则：`include` / `exclude`（glob，`**/` 可匹配零层目录）；隐藏文件和目录默认跳过；第一级子目录即 `scope`，可作过滤条件。
-- **FR-103** 支持多知识库登记（全局配置里列名字到路径的映射），命令行用 `--kb` 选择。
-- **FR-104** 文档元信息：Markdown 的 YAML 头（`title`、`tags`、`aliases` 等）进入索引，可用于过滤和加权。
-- **FR-105** 每个 scope 和知识库可写一句描述（借鉴 qmd 的集合描述），用于检索加权和结果展示。
+- **FR-101** 命令行用 `--root <路径>` 或 `--kb <名字>` 指定知识库。两者都没给时：全局配置有 `default` 就用它，否则用当前工作目录。两者都给时报错。
+- **FR-102** 全局配置文件：`~/.config/wensuo/config.yaml`（Windows：`%APPDATA%\wensuo\config.yaml`），格式：
 
-### 5.2 增量同步（FR-2xx）
-
-- **FR-201** 每次查询前同步：先用文件的修改时间和大小快速判断，有变化再算内容哈希确认；只重新解析、切段、计算向量变化的文件。
-- **FR-202** 删除的文件，下次同步时把它的段和向量一并移除。
-- **FR-203** 向量按"段文本哈希 + 模型身份"缓存；换模型时整体失效，切段规则变化时按版本号失效。
-- **FR-204** 解析失败的文件记录原因并跳过，不影响整库；文件不变就不再重试。
-- **FR-205** 可选 `ws watch`：前台运行的监听模式（不是后台服务），给需要实时性的人用。
-- **FR-206** 首次建索引显示进度；可指定线程数，默认只用一半 CPU 核。
-- **FR-207** 单写多读：多个进程同时查询安全；写入（同步）用文件锁串行化。
-
-### 5.3 解析（FR-3xx，借鉴 haiku.rag）
-
-- **FR-301** 内置：Markdown、TXT、CSV（纯 Python，核心依赖内）。
-- **FR-302** 扩展 `axc-wensuo[docs]`：用 Docling 解析 PDF、DOCX、PPTX、XLSX、HTML，输出统一的结构化文档模型：标题树、段落、表格（行、列、表头）、图片说明、页码。
-- **FR-303** 扩展 `axc-wensuo[ocr]`：扫描件、图片的文字识别，默认关闭。
-- **FR-304** 解析器按名字注册，可替换（如 `pypdf` 轻量解析 / `docling` 高保真解析）。
-- **FR-305** 解析结果缓存到索引目录，调参重切段时不必重新解析。
-
-### 5.4 切段（FR-4xx）
-
-- **FR-401** 结构化切段：按标题层级切；超长章节按段落装箱；**表格按行切，每片重复表头**；代码块不拆、代码块里的 `#` 不当标题。
-- **FR-402** 每段携带：文档标题、章节路径、起止行号或页码、表格坐标、scope、元信息。
-- **FR-403** 过短段并入相邻段；段长上限可配（默认约 1,200 字）。
-- **FR-404** 检索单元和返回单元可以不同：长表格按行建细粒度索引，命中后返回所在段或整张表（借鉴 haiku.rag 的上下文扩展）。
-
-### 5.5 索引（FR-5xx，借鉴 txtai 的组件化）
-
-- **FR-501 关键词索引**（必选）：BM25。分词器可插拔，默认 `cjk_bigram`：中文按单字 + 相邻两字切；英文、数字、标识符整词保留，并按 `_ . -` 拆分；大小写归一。可选 `jieba` 等词典分词。
-- **FR-502 向量索引**（可选，默认开）：本地 ONNX 向量模型（默认中文小模型，约 100 MB 以内）；暴力点积，规模超过阈值时可切换近似索引后端。
-- **FR-503** 标题和章节路径参与关键词索引，并加权。
-- **FR-504** 存储后端可替换：默认 SQLite（文档、段、同步状态、关键词倒排）+ 向量文件；可选 LanceDB 后端支持更大规模。索引目录可整体拷贝到另一台机器直接使用。
-
-### 5.6 检索与排序（FR-6xx）
-
-- **FR-601 召回**：关键词、向量两路各取前 N（默认 50）。
-- **FR-602 融合**：按名次融合（RRF）。**关键词精确命中保护**：查询中的标识符（函数名、配置项、编号）在段中精确出现时提升排名。
-- **FR-603 重排**（可选）：交叉编码 ONNX 模型对融合后前 K（默认 30）段打分。**按名次加权融合**：融合前几名以检索分为主、靠后的以重排分为主，避免重排把精确命中压下去（借鉴 qmd）。
-- **FR-604 分数校准**：重排模型附带校准参数（温度、偏置），输出 P(段落能回答问题)；没有重排模型时，分数明确标注为"仅可排序、不可作阈值"。
-- **FR-605 阈值**：`min_score` 可配，默认值随模型给出并写明含义（如"可答问题返回率、无答案误返回率"）。
-- **FR-606 过滤**：按 scope、路径前缀、标签、文件类型、修改时间过滤。
-- **FR-607 去重与多样性**：同一文档的多个相邻段可合并展示；可限制每文档最多返回 M 段。
-- **FR-608 查询改写**（可选扩展）：同义词表（知识库内维护的 `synonyms.yaml`，如"登录 = 登陆"）在查询时展开；大模型扩写作为可选项，默认关闭。
-
-### 5.7 问答与引用（FR-7xx，借鉴 haiku.rag）
-
-- **FR-701** `ask`：检索后调用任意 OpenAI 兼容的大模型生成回答（扩展 `axc-wensuo[llm]`），回答中每个结论标注引用编号。
-- **FR-702** 引用定位到文件、行号或页码、章节路径；PDF 可选输出页面截图并框出引用区域。
-- **FR-703** 检索结果没有达到阈值的段时，拒答并说明"知识库中未找到"，不编造。
-- **FR-704** 可选的"计算型问答"：对检索到的表格段做计数、汇总（受限沙箱，默认关闭）。
-
-### 5.8 知识缺口与运维（FR-8xx）
-
-- **FR-801 缺口清单**：没有任何结果通过阈值的查询自动记录（查询、时间、调用方），`ws gaps` 查看与导出，供维护者补文档。
-- **FR-802 `ws doctor`**：索引状态、文档数和段数、各 scope 分布、解析失败的文件、模型身份、缓存大小。
-- **FR-803 `ws stats` / `ws show <段id>`**：查看单段原文与位置。
-- **FR-804 查询日志**（可选，默认关闭）：本地记录查询与返回结果，用于积累评测集。
-
-### 5.9 评测（FR-9xx）
-
-- **FR-901** 查询集格式：jsonl，每行 `{"query", "relevant": [文档路径或段id], "top_k"?}`。
-- **FR-902** `ws eval`：输出各召回方式的 Recall@k、MRR、第一条相关率；对比两个配置的差异。
-- **FR-903** 可选大模型分级评测：对各方法返回的段统一按 0~3 分打分，解决人工标注不全的问题。
-- **FR-904** 无答案查询集：测"无答案时误返回率"。
-
-### 5.10 接口（FR-10xx）
-
-- **FR-1001 命令行**
-
-  ```text
-  ws search <query> [--kb] [--root] [--top-k] [--min-score] [--scope] [--format text|json] [--max-chars]
-  ws ask <question> [...]            # 需要 [llm] 扩展
-  ws show <chunk_id>
-  ws read <path> [--section]         # 读整篇或某章节
-  ws chat                            # 终端对话界面
-  ws sync | ws watch | ws doctor | ws stats | ws gaps | ws eval <queries.jsonl>
-  ws mcp                             # stdio MCP，由 agent 客户端拉起，不常驻
-  ws web                             # 可选：前台启动本地网页，关闭即停
+  ```yaml
+  default: notes
+  kbs:
+    notes: ~/Documents/notes
+    manuals: /data/manuals
   ```
 
-- **FR-1002 JSON 输出稳定**：字段有版本号，向后兼容；包含 `chunk_id`、`path`、`title_path`、`start_line`/`page`、`score`、`score_kind`（calibrated | rank_only）、`text`、`sources`（各路名次）。
-- **FR-1003 MCP 工具**：`search`、`read`、`list_docs`、`ask`（可选）；工具描述写清用法和阈值含义。
-- **FR-1004 Python API**：同步接口为主（`KnowledgeBase(path).search(...)`），长期实例只加载一次模型。
+- **FR-103** 知识库配置文件：`<root>/wensuo.yaml`，可选，全部字段可省略，完整字段见第 9 节。未知字段报错。
+- **FR-104** 索引目录默认 `<root>/.wensuo/`，可用配置 `index_dir` 改到别处。根目录不可写且未配置 `index_dir` 时报错，提示配置 `index_dir`。
 
-### 5.11 配置（FR-11xx）
+### 5.2 收纳规则
 
-```yaml
-# wensuo.yaml（放在知识库根目录，全部可选）
-name: my-docs
-include: ["**/*.md", "**/*.pdf"]
-exclude: ["**/README.md"]
-scopes:
-  api: "接口说明与参数"
-chunk: {max_chars: 1200, min_chars: 80}
-lexical: {tokenizer: cjk_bigram, title_weight: 2}
-dense: {model: bge-small-zh, enabled: true}
-rerank: {model: default-zh, top_k: 30, enabled: true}
-search: {candidates: 50, min_score: 0.2}
-synonyms: synonyms.yaml
-parsers: {pdf: docling}
-```
+- **FR-111** 默认收纳扩展名：`.md`、`.markdown`、`.txt`、`.csv`、`.tsv`（核心）；`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.html`、`.htm`（需要 `docs` 扩展）。扩展名不区分大小写。
+- **FR-112** `include` / `exclude` 是 glob 列表，相对根目录匹配，`**/` 可匹配零层或多层目录。配置了 `include` 时只收纳匹配的文件；`exclude` 优先于 `include`。
+- **FR-113** 总是跳过：以 `.` 开头的文件和目录、索引目录、`wensuo.yaml`、`synonyms.yaml`、`node_modules/`、`__pycache__/`，以及超过 `max_file_mb`（默认 50）的文件。
+- **FR-114** 需要 `docs` 扩展的文件，在未安装扩展时不报错退出，记为"跳过：缺少 docs 扩展"，在 `ws doctor` 和同步报告中显示。
+- **FR-115** 符号链接：跟随文件链接，不跟随目录链接。
 
----
+### 5.3 专题（scope）规则
 
-## 6. 非功能需求
+每篇文档的专题按以下顺序取第一个命中的：
 
-| 项 | 要求（以 Apple M 系列或同级 x86 单核为基准） |
-| --- | --- |
-| 查询延迟 | 无重排 p95 ≤ 200 ms；含重排 30 段 p95 ≤ 1 s（不含进程启动） |
-| 进程启动 | 命令行冷启动到出结果 ≤ 2 s（含加载模型） |
-| 增量同步 | 改 1 个 Markdown 文件后，下次查询的同步开销 ≤ 3 s |
-| 首次建索引 | 2,500 段文本 ≤ 5 分钟（4 线程）；可后台限速 |
-| 内存 | 查询进程常驻 ≤ 1 GB |
-| 安装体积 | 核心包加默认模型 ≤ 300 MB；不强制安装 torch |
-| 离线 | 模型下载完成后全程离线可用；模型固定版本并校验 SHA-256 |
-| 平台 | macOS、Linux、Windows；Python 3.11+ |
-| 并发 | 多进程同时读安全；同步写入串行 |
-| 可重建 | 删除索引目录后重新同步，检索结果一致（同模型同配置） |
+1. Markdown 文件头 YAML（`---` 包围）中的 `scope` 字段。
+2. `wensuo.yaml` 中 `scope_rules` 列表，按顺序第一个 glob 匹配的规则。
+3. 文档所在的第一级子目录名。
+4. 文档直接在根目录下时，专题为 `_root`。
+
+- **FR-121** 专题名区分大小写，比较时做 Unicode NFC 归一。
+- **FR-122** `wensuo.yaml` 的 `scopes` 字段可给每个专题写一句描述，在 `ws scopes` 和 MCP 工具描述中展示。没有描述的专题照常可用。
+
+### 5.4 文档元信息
+
+- **FR-131** Markdown 文件头 YAML 中的 `title`、`tags`（字符串或字符串列表）、`aliases`、`scope` 进入索引；其他字段忽略。文件头 YAML 解析失败时，把它当正文处理并记录警告。
+- **FR-132** 文档标题：文件头 `title` > 第一个一级标题 > 文件名（去扩展名）。
+- **FR-133** `title` 和 `aliases` 参与关键词索引（第 7.1 节）。
 
 ---
 
-## 7. 架构
+## 6. 同步、解析与切段
+
+### 6.1 增量同步
+
+- **FR-201** `search`、`read`、`list_docs` 默认先同步再执行；`--no-sync`（命令行）或 `sync=False`（API）跳过同步。`ws sync` 只做同步。
+- **FR-202** 判断变化：先比较文件大小和修改时间（纳秒）；有差异再算内容 SHA-256；哈希没变只更新时间戳，变了才重新解析、切段、计算向量。
+- **FR-203** 删除的文件，同步时把它的段、向量、解析缓存一并删除。
+- **FR-204** 以下任一项变化时，全部文档重新切段：切段配置、分词配置、本程序的切段版本号（代码常量）。向量模型身份（模型名 + 文件 SHA-256）变化时，全部向量重算。
+- **FR-205** 向量按"段索引文本的 SHA-256 + 向量模型身份"缓存，文本没变的段不重算。
+- **FR-206** 解析失败的文件记录失败原因、文件哈希和解析器版本（Docling 版本或本程序解析器版本常量）；两者都不变就不再重试。缺少 `docs` 扩展而跳过的文件，在安装扩展后的下一次同步中解析。内容为空（或解析结果为空）的文件记为"解析结果为空"，不产生段。
+- **FR-207** 并发：写入（同步）用索引目录下的文件锁 `lock` 串行化；每个文件的增删改在一个 SQLite 事务内完成，读者只看到已提交的数据。
+  - `search`/`read`/`docs` 的自动同步拿不到锁时，不等待，直接用已有索引查询并标记 `stale: true`；索引从未建立过时报运行错误（退出码 3），提示稍后重试。
+  - `--no-sync` 时 `stale` 为 `false`。
+  - `ws sync` 拿不到锁时最多等待 60 秒，超时报运行错误（退出码 3）。
+- **FR-208** 同步报告：新增、修改、删除、跳过、失败的文件数，以及耗时。命令行在标准错误输出打印；同步文件数超过 20 个时显示进度。
+- **FR-209** 向量计算线程数：默认 `max(1, CPU 核数 // 2)`，可用 `--threads` 或配置 `threads` 指定。
+
+### 6.2 解析
+
+- **FR-301** Markdown：保留标题层级、段落、列表、表格（管道表格）、代码块。代码块内的 `#` 不当标题。
+- **FR-302** TXT：按空行分段落，没有标题。编码先试 UTF-8（含 BOM），失败再试 GB18030；都失败则记为解析失败。
+- **FR-303** CSV/TSV：整个文件是一张表，第一行是表头。编码规则同 TXT。
+- **FR-304** PDF、DOCX、PPTX、XLSX、HTML（`docs` 扩展）：用 Docling 解析为结构化文档，保留标题层级、段落、表格（含表头）、页码（PDF）、幻灯片号（PPTX）、工作表名和行号（XLSX）。XLSX 每个工作表是一张表，第一行是表头。
+- **FR-305** Docling 的解析结果按"文件 SHA-256 + Docling 版本"缓存到索引目录，切段配置变化时不重新解析。
+- **FR-306** `read` 返回的全文：Markdown 和 TXT 返回原文；其他格式返回由解析结果转换出的 Markdown。
+- **FR-307** `read --section`：参数按 ` > ` 拆成标题列表，与文档各标题的完整标题链做前缀精确匹配（NFC，去首尾空白），取文档内第一个命中的标题，返回从该标题行到下一个同级或更高级标题之前的内容（含全部子章节）。找不到时退出码 1。
+- **FR-308** `read` 的 `offset`、`max_chars` 以码点计，相对于返回文本（整篇或所选章节）的起点；`next_offset` = `offset + 实际返回码点数`，已到末尾时为 `null`。
+
+### 6.3 切段
+
+参数默认值：`max_chars = 1200`，`min_chars = 80`。字符数按 Unicode 码点计。
+
+- **FR-401** 按标题切：每个标题行到下一个**任意级别**标题行之前的内容是一个切段单元，标题行本身计入该单元的 `text`。第一个标题之前的内容是一个单元，章节路径为空。父标题与第一个子标题之间的内容单独成单元。
+- **FR-402** 长度 = `text` 的码点数（含标题行、段落间的换行）。单元长度 ≤ `max_chars`：整体成为一段。
+- **FR-403** 单元长度 > `max_chars`：按段落（空行分隔；列表项和代码块各算一个段落）顺序贪心装箱，段落间用两个换行连接并计入长度，每段不超过 `max_chars`。标题行只放在该单元的第一段；后续段的章节路径不变。
+- **FR-404** 单个段落 > `max_chars`：在句末标点（`。！？；.!?;` 和换行）之后切开，标点留在前一段，再按 FR-403 装箱；单句仍超长则按 `max_chars` 硬切。代码块不在内部切，除非超过 `2 × max_chars`，此时按行装箱（单行超长则硬切）。
+- **FR-405** 表格：表格单独成段，不与前后段落装在一起。按数据行装箱，每段开头重复表头行（及 Markdown 分隔行 `| --- |`），每段不超过 `max_chars`（单行超长时该行单独成段，不再切）。表格行以 Markdown 管道表格格式写入段文本：单元格内的 `|` 转义为 `\|`，单元格内换行替换为空格。
+- **FR-406** 短段合并：长度 < `min_chars` 的段，并入同一文档中紧邻的前一段，前提是两段的父章节路径（`title_path` 去掉最后一级）相同且合并后不超过 `max_chars`；否则按同样条件并入紧邻的后一段；都不满足则保持原样。合并后 `title_path` 取被并入段的，`location` 取两者的并集。表格段不参与合并。
+- **FR-407** 每段字段：`chunk_id`、`doc_id`、`scope`、`title_path`、`text`（原文）、`index_text`（用于建索引，见下）、`location`（见第 8.3 节）、`ordinal`（文档内序号，从 0 开始）。
+- **FR-408** `index_text` = 文档标题 + 换行 + 章节路径用 ` > ` 连接 + 换行 + `text`。
+- **FR-409** `chunk_id` = `sha1(doc_id + "\n" + " > ".join(title_path) + "\n" + text + "\n" + n)` 的前 16 位十六进制，`n` 是同一文档内此前出现过的完全相同（`title_path` 和 `text` 都相同）段的个数，从 0 开始。文档其他位置的修改不改变未变段的 `chunk_id`；段内容变化后 `chunk_id` 随之变化。
+
+---
+
+## 7. 索引与检索
+
+### 7.1 关键词索引（必选）
+
+- **FR-501** 分词器 `cjk_bigram`（默认）：
+  1. 文本做 Unicode NFKC 归一，转小写。
+  2. 连续的汉字（码点范围 U+3400–U+4DBF、U+4E00–U+9FFF、U+F900–U+FAFF）：输出每个单字，以及每对相邻两字。
+  3. 连续的 `[a-z0-9_.\-]`：去掉首尾的 `.` 和 `-` 后输出整串；若含 `_`、`.`、`-`，再按这些符号拆开输出各部分；整串和各部分都至少 1 个字符才输出。
+  4. 其他字符（标点、空白、表情等）丢弃。不去停用词。
+- **FR-502** 可选分词器 `jieba`（需用户自行安装 jieba，未安装时选它报错）：jieba 精确模式分词，英文和标识符处理同 `cjk_bigram` 第 3 步。
+- **FR-503** 排序函数 BM25，`k1 = 1.2`，`b = 0.75`：
+  - 词频 `tf = tf_body + title_weight × tf_meta`。`tf_body` 是段 `text` 中的词频；`tf_meta` 是文档标题、`aliases` 和章节路径中的词频；两者分别对各自的文本分词，不重复计数（`text` 中的标题行算 `tf_body`）。`title_weight` 默认 2。
+  - 段长 `dl` = 该段所有词的加权词频之和；`avgdl` 为全库平均。
+  - `idf = ln(1 + (N − n + 0.5) / (n + 0.5))`，N 为段总数，n 为含该词的段数。
+  - 查询词去重，每个词计一次。段分数 = Σ `idf × tf × (k1 + 1) / (tf + k1 × (1 − b + b × dl / avgdl))`。
+  - 关键词召回只返回分数 > 0 的段。
+- **FR-504** 查询分词与文档分词使用同一分词器。
+
+### 7.2 向量索引（默认开启）
+
+- **FR-511** 默认模型：`BAAI/bge-small-zh-v1.5`（MIT，HF revision `7999e1d3359715c523056ef9478215996d62a620`），导出为 ONNX 使用。取 CLS 向量后 L2 归一化，512 维。
+- **FR-512** 模型分发：仓库提供导出脚本 `tools/export_embedder.py`（导出时才需要 torch 和 transformers，用 `uv run --with` 临时安装，不进项目依赖）。导出规格：fp32、不量化、opset 17，输入 `input_ids`、`attention_mask`、`token_type_ids`（int64，batch 和序列长度为动态维度），输出 `embedding`（float32，`[batch, 512]`，即 `last_hidden_state[:, 0]` 做 L2 归一化）；`tokenizer.json` 直接取 HF 仓库同一 revision 的文件。维护者执行导出并上传到本仓库 GitHub Release（标签 `models-v1`），再把下载地址和两个文件的 SHA-256 写进代码常量；下载后校验，不一致报错。Release 发布前，开发和测试用 `models_dir` 指向本地导出的文件。
+- **FR-513** 模型存放：`~/.cache/wensuo/models/<模型名>/`，可用配置 `models_dir` 指定。`ws models download` 预先下载；查询时发现缺模型，报错并提示执行该命令，不自动联网（避免离线环境卡住）。
+- **FR-514** 文档侧编码 `index_text`（不加前缀）。内容 token 数（不含 `[CLS]`、`[SEP]`）≤ 510 时整段编码；超过时按每窗 448 个内容 token、步长 384 切窗（最后一窗不足 448 照用），每窗前后加 `[CLS]`、`[SEP]` 分别编码，各窗向量算术平均后再 L2 归一化。
+- **FR-515** 查询侧在查询前加指令前缀 `为这个句子生成表示以用于检索相关文章：`，内容截断到 510 token。查询最长 1,000 个码点，超出报参数错误。
+- **FR-516** 相似度用点积，暴力计算全部段向量。向量以 float16 存储，计算时转 float32。
+- **FR-517** 配置 `dense.enabled: false` 时完全不加载模型，检索只走关键词，`sources` 中没有 `dense`。`dense.model` 只接受 `bge-small-zh-v1.5`，其他值报 `ConfigError`。
+
+### 7.3 召回与融合
+
+检索流水线**严格按以下顺序**执行，未开启重排时跳过第 5、7 步：
+
+1. 过滤（第 7.6 节）确定候选段集合。
+2. 关键词、向量两路召回。
+3. 加权 RRF 融合。
+4. 标识符分层，得到融合名次 r（从 1 开始）。
+5. 取前 `rerank.top_k` 段重排，其余段丢弃。
+6. 排序：先按层，层内按 `final`（重排）或 `fused`（未重排）降序，同分按 `chunk_id` 升序。
+7. 丢弃 `p < min_score` 的段。
+8. 每篇文档只保留排序最靠前的 `max_per_doc` 段。
+9. 截取前 `top_k` 段，`rank` 从 1 开始编号。
+
+
+- **FR-601** 召回：关键词、向量两路各取前 `candidates`（默认 50）段。过滤条件（第 7.6 节）在召回前生效。
+- **FR-602** 融合用加权 RRF：`fused = Σ w_i / (60 + rank_i)`，`rank_i` 从 1 开始，未被某路召回的段该路不计分。默认 `w_lexical = 1.0`，`w_dense = 0.5`。
+- **FR-603** 标识符精确命中分层：提取查询中的全部标识符（定义见第 4 节，比较时小写）。若查询含标识符，按"段的 `index_text` 中字面出现的不同标识符个数"降序分层，层内按 `fused` 降序。查询不含标识符时不分层。
+- **FR-604** 每篇文档最多返回 `max_per_doc`（默认 3）段（上述第 8 步）。
+
+### 7.4 重排（可选，默认关闭）
+
+- **FR-611** 配置 `rerank.model_dir` 指向一个模型目录时开启。目录内必须有：
+  - `model.onnx`：交叉编码器，输入 `input_ids`、`attention_mask`，可选 `token_type_ids`；输出 logits，形状 `[batch, 1]` 或 `[batch, 2]`。
+  - `tokenizer.json`
+  - `model_meta.json`：`{"max_length": 384, "query_max_tokens": 64, "passage_chars": 320, "temperature": 1.0, "bias": 0.0, "default_min_score": 0.2}`，其中 `max_length`、`temperature`、`bias`、`default_min_score` 必填。
+- **FR-612** 输入：查询截断到 `query_max_tokens`；段落 = 章节路径（` > ` 连接）+ 换行 + `text` 前 `passage_chars` 个字符；按 `[CLS] 查询 [SEP] 段落 [SEP]` 编码，总长截断到 `max_length`。
+- **FR-613** 概率：logit = 输出为 1 列时取该列，为 2 列时取 `第 2 列 − 第 1 列`；`p = sigmoid(logit / temperature + bias)`。
+- **FR-614** 对融合排序后的前 `rerank.top_k`（默认 30）段重排。按融合名次 r 计算 `s_ret = 1 − (r − 1) / top_k`，`final = w × s_ret + (1 − w) × p`，其中 r ≤ 3 时 w = 0.75，4 ≤ r ≤ 10 时 w = 0.60，r > 10 时 w = 0.40。r 是第 4 步得到的分层后名次。排序见第 7.3 节第 6 步。
+- **FR-615** 阈值：`p < min_score` 的段丢弃。`min_score` 默认取 `model_meta.json` 的 `default_min_score`，可由配置或参数覆盖。
+
+### 7.5 分数与"查不到"
+
+- **FR-621** 每条结果的 `score` 和 `score_kind`：
+  - 开启重排时 `score = p`，`score_kind = "calibrated"`（可作阈值）。此时结果顺序以 `rank` 为准，`score` 不保证单调。
+  - 未开启重排时 `score = fused`，`score_kind = "rank_only"`（只能比较先后，不能作阈值）。
+- **FR-622** 未开启重排时传入 `min_score`，报参数错误。
+- **FR-623** 查询结果附带 `identifiers`（查询中的标识符列表）和 `missing_identifiers`（在整个知识库所有段的 `index_text` 中都没有出现过的标识符）。
+- **FR-624** `search` 执行成功且满足以下任一情况时记入缺口清单（索引目录内）：结果为空；或 `missing_identifiers` 非空。参数错误、运行错误、`ws eval` 发起的查询不记录。去重键为（查询原文，过滤条件的规范化 JSON（键排序、去掉值为空的键），调用入口 cli/mcp/api）。记录字段：`query`、`filters`、`entry`、`count`（累计次数）、`first_seen`、`last_seen`（`YYYY-MM-DD HH:MM:SS`）、`last_result_count`、`missing_identifiers`。`ws gaps` 按 `count` 降序、同值按 `last_seen` 降序列出。
+- **FR-625** 查询分词后没有任何词（例如全是标点）时，报参数错误。
+
+### 7.6 过滤与同义词
+
+- **FR-631** 过滤条件（可组合，全部为"与"关系）：
+  - `scope`：可多个，"或"关系，精确匹配（NFC）。
+  - `path_prefix`：`doc_id` 的字符串前缀匹配，不做目录边界处理（`a/b` 匹配 `a/bc/x.md`）。
+  - `tags`：可多个，文档须包含全部，区分大小写（NFC）。
+  - `file_types`：扩展名列表，带不带点都接受，内部统一为小写无点。
+  - `modified_after`：`YYYY-MM-DD`，文件修改时间 ≥ 本地时区该日 00:00。
+- **FR-632** 同义词：`<root>/synonyms.yaml`（可选），格式为词组列表，例如 `- [登录, 登陆, sign in]`。对 NFKC 归一并转小写后的原始查询做子串匹配，命中组内任一词时，把组内其他词分词后并入关键词查询的词集（与原词同权，去重）。向量召回、`identifiers`、`missing_identifiers` 只用原始查询。同义词文件变化不需要重建索引。
+
+---
+
+## 8. 接口
+
+### 8.1 命令行
 
 ```text
-          ┌─────────── 接口层 ───────────┐
-          │ CLI │ MCP(stdio) │ Python API │ TUI │ 本地网页(可选) │
-          └──────────────┬───────────────┘
-                         ▼
-   KnowledgeBase ── sync() ──► Source(目录扫描/哈希) ─► Parser 注册表 ─► Chunker
-        │                                                              │
-        │                                         ┌────────────────────┴───────┐
-        │                                         ▼                            ▼
-        │                                  LexicalIndex(分词器注册表)     DenseIndex(向量模型注册表)
-        │                                         │                            │
-        └── search() ──► Recall(两路) ─► Fusion(名次融合 + 精确命中保护) ─► Reranker(可选, 校准)
-                                                                              │
-                                              Threshold / 过滤 / 去重 ◄────────┘
-                                                      │
-                                           结果(引用定位) ─► ask(可选 LLM) / gaps 记录
-   存储：SQLite(文档、段、同步状态、倒排、缺口) + 向量文件 │ 可选 LanceDB 后端
+ws [--root PATH | --kb NAME] <命令> [选项]
+
+ws search QUERY [--top-k 5] [--scope S]... [--path-prefix P] [--tag T]... [--file-type EXT]...
+                [--modified-after YYYY-MM-DD] [--min-score F] [--max-chars 800]
+                [--format text|json] [--no-sync] [--threads N]
+ws read DOC_ID [--section "标题 > 子标题"] [--offset 0] [--max-chars 20000] [--format text|json] [--no-sync]
+ws show CHUNK_ID [--format text|json]
+ws docs [--scope S]... [--path-prefix P] [--format text|json] [--no-sync]
+ws scopes [--format text|json]
+ws sync [--threads N] [--format text|json]
+ws doctor [--format text|json]
+ws gaps [--limit 50] [--format text|json] [--clear]
+ws eval QUERIES.jsonl [--modes lexical,dense,fused,rerank] [--k 5] [--format text|json]
+ws models download [--force]
+ws mcp
+ws --version
 ```
 
-- **借鉴 haiku.rag**：结构化文档模型（Docling）、引用定位、上下文扩展、MCP、终端对话、拒答。
-- **借鉴 txtai**：注册表式组件、可替换的存储后端、增量 upsert/delete、可移植的索引目录。
-- **借鉴 qmd**：agent 友好的 JSON 输出与 `--min-score`、按名次加权融合、集合描述。
-- **自有**：中文双字 + 标识符分词、查询前自动增量同步、校准概率阈值、无答案检测与缺口清单、评测工具。
+- **FR-1001** 退出码：0 = 成功；1 = 仅用于 `search` 无结果、`read`/`show` 找不到对象（其他命令结果为空也返回 0）；2 = 参数或配置错误；3 = 运行错误（缺模型、缺扩展、索引损坏、锁超时、模型下载或校验失败等）。`ws doctor` 发现解析失败文件仍返回 0。错误信息写标准错误输出；`--format json` 时错误也以 `{"schema_version": 1, "error": {"code": 2, "message": "…"}}` 写到标准输出。
+- **FR-1002** `--format text`（默认）面向人：每条结果一块，块间空一行。第一行 `[rank] score doc_id 位置`，score 保留 4 位小数；位置写法：`lines` → `L12-40`，`page` → `p3-5`，`slide` → `s2-2`，`sheet` → `Sheet1!r5-30`，`section` 不写。第二行章节路径（` > ` 连接，为空时省略该行）。之后是正文，超过 `--max-chars` 截断并以 `…` 结尾。`missing_identifiers` 非空时在最前面输出一行 `知识库中未出现：a, b`。
+- **FR-1003** `--format json` 面向程序：输出单个 JSON 对象到标准输出，结构见第 8.3 节；标准输出不混入任何其他内容。
+- **FR-1004** `ws doctor` 输出：根目录、索引目录、配置来源、文档数、段数、各专题文档数、各扩展名文件数、跳过文件（含原因）、解析失败文件（含原因）、向量模型身份和是否就绪、重排模型身份和是否就绪、索引大小。
+
+### 8.2 MCP（stdio）
+
+- **FR-1011** `ws mcp` 启动 stdio MCP 服务器（需要 `mcp` 扩展），绑定一个知识库（由 `--root`/`--kb` 决定）。客户端退出时随之退出。
+- **FR-1012** 工具及参数（参数名与命令行一致）：
+  - `search(query, top_k=5, scope=None, path_prefix=None, tags=None, file_types=None, modified_after=None, min_score=None, max_chars=800)`
+  - `read(doc_id, section=None, offset=0, max_chars=20000)`
+  - `list_docs(scope=None, path_prefix=None)`
+  - `list_scopes()`
+- **FR-1013** 返回内容与对应命令行 `--format json` 完全相同（`search` ↔ `ws search`，`read` ↔ `ws read`，`list_docs` ↔ `ws docs`，`list_scopes` ↔ `ws scopes`）。MCP 每次调用都自动同步。MCP 不提供 `show`、`sync`、`gaps`、`eval`、`doctor`。
+- **FR-1014** `search` 工具描述中必须写明：知识库名、各专题名和描述、`score_kind` 的含义、`missing_identifiers` 的含义（"这些词知识库里没有，换说法或说明知识库缺失"）。
+
+### 8.3 JSON 结构
+
+`search` 输出：
+
+```json
+{
+  "schema_version": 1,
+  "query": "用户表的 user_id 字段",
+  "stale": false,
+  "score_kind": "rank_only",
+  "identifiers": ["user_id"],
+  "missing_identifiers": [],
+  "results": [
+    {
+      "rank": 1,
+      "chunk_id": "3f2a9c0d1e4b5a67",
+      "doc_id": "数据字典/用户.md",
+      "doc_title": "用户表",
+      "scope": "数据字典",
+      "title_path": ["用户表", "字段说明"],
+      "location": {"kind": "lines", "start": 12, "end": 40},
+      "score": 0.0312,
+      "sources": {"lexical": 1, "dense": 4},
+      "text": "……",
+      "truncated": false
+    }
+  ]
+}
+```
+
+- `location` 只覆盖段内容在原文中的连续区间，重复插入的表头行不计入。`location.kind` 取值：`lines`（Markdown、TXT、CSV/TSV：`start`、`end` 为 1 起始的行号，含标题行，闭区间）、`page`（PDF：`start`、`end` 页码）、`slide`（PPTX：`start`、`end`）、`sheet`（XLSX：`sheet`、`row_start`、`row_end`，表头固定为第 1 行，`row_start` 是该段第一条数据行的行号）、`section`（DOCX、HTML：无数字位置，只有章节路径）。
+- `sources` 中某路未召回该段时，该键不出现；开启重排时增加 `"rerank": p`。
+- `read` 输出：`schema_version`、`doc_id`、`doc_title`、`scope`、`tags`、`text`、`offset`、`next_offset`（没有更多内容时为 `null`）。
+- `show` 输出：单段的全部字段（同 `results` 元素，不截断）。
+- `docs` 输出：`schema_version` 和 `docs` 列表，每项含 `doc_id`、`doc_title`、`scope`、`tags`、`chunks`、`modified`（`YYYY-MM-DD HH:MM`），按 `doc_id` 升序。
+- `scopes` 输出：`schema_version` 和 `scopes` 列表，每项含 `scope`、`description`（无则 `null`）、`docs`（文档数），按 `scope` 升序。
+- `sync` 输出：`schema_version`、`added`、`modified`、`deleted`、`skipped`、`failed`（均为 doc_id 列表）、`chunks_total`、`seconds`。
+- `doctor` 输出：`schema_version`、`root`、`index_dir`、`config_files`（列表）、`docs`、`chunks`、`scopes`（专题 → 文档数）、`file_types`（扩展名 → 文件数）、`skipped`（`[{doc_id, reason}]`）、`failed`（`[{doc_id, reason}]`）、`dense`（`{enabled, model, ready}`）、`rerank`（`{enabled, model_dir, ready}`）、`index_bytes`。
+- `gaps` 输出：`schema_version` 和 `gaps` 列表，字段见 FR-624。
+- `eval` 输出：`schema_version`、`k`、`modes`（模式 → `{hit_at_k, top1, mrr_at_k, answerable_return_rate, false_return_rate, n}`，数据中没有对应查询的指标为 `null`）。
+- JSON 字段只增不改；改动已有字段含义时 `schema_version` 加 1。
+
+### 8.4 Python API
+
+```python
+from axc_wensuo import KnowledgeBase
+
+kb = KnowledgeBase('/path/to/docs')          # 或 KnowledgeBase.open('notes') 按全局配置名字打开
+report = kb.sync()                            # SyncReport
+res = kb.search('用户表的 user_id 字段', top_k=5, scope=['数据字典'])  # SearchResult
+doc = kb.read('数据字典/用户.md', section='用户表 > 字段说明')
+chunk = kb.show('3f2a9c0d1e4b5a67')
+docs = kb.list_docs(scope=['数据字典'])
+kb.close()                                    # 也支持 with 语句
+```
+
+- **FR-1021** 返回对象是 dataclass，`to_dict()` 输出与第 8.3 节 JSON 完全相同。
+- **FR-1022** 同一 `KnowledgeBase` 实例只加载一次模型；线程安全不做要求（文档注明"一个线程一个实例"）。
+- **FR-1023** 异常类型：`ConfigError`（对应退出码 2）、`WenSuoRuntimeError`（对应退出码 3），都继承 `WenSuoError`。
 
 ---
 
-## 8. 验收标准
+## 9. 配置（`wensuo.yaml`）
 
-用以下四套数据回归（格式见 FR-901；数据基于自有文档库构造，不随仓库发布）：
+全部字段可选，以下为默认值：
 
-| 数据 | 规模 | 用途 |
+```yaml
+name: null                  # 知识库显示名，默认为根目录名
+index_dir: null             # 默认 <root>/.wensuo/
+models_dir: null            # 默认 ~/.cache/wensuo/models/
+threads: null               # 默认 max(1, CPU 核数 // 2)
+include: []                 # 空 = 收纳所有支持的扩展名
+exclude: []
+max_file_mb: 50
+scopes: {}                  # 专题描述，例如 {数据字典: "表结构与字段说明"}
+scope_rules: []             # 例如 [{glob: "**/*报销*", scope: 财务}]
+chunk: {max_chars: 1200, min_chars: 80}
+lexical: {tokenizer: cjk_bigram, title_weight: 2, k1: 1.2, b: 0.75}
+dense: {enabled: true, model: bge-small-zh-v1.5}
+fusion: {w_lexical: 1.0, w_dense: 0.5, candidates: 50, max_per_doc: 3}
+rerank: {model_dir: null, top_k: 30, min_score: null}
+```
+
+- **FR-1101** 命令行参数优先于 `wensuo.yaml`，`wensuo.yaml` 优先于默认值。
+- **FR-1102** 类型错误、取值越界、未知字段都报 `ConfigError`，错误信息包含字段路径。取值约束：`max_chars > min_chars ≥ 1`；`title_weight`、`w_lexical`、`w_dense` ≥ 0 且 `w_lexical + w_dense > 0`；`candidates`、`max_per_doc`、`rerank.top_k`、`threads`、`max_file_mb` 为正整数；`k1 > 0`；`0 ≤ b ≤ 1`；`min_score` 在 [0, 1]；`scope_rules` 每项必须且只能有非空字符串 `glob` 和 `scope`。
+
+---
+
+## 10. 非功能需求
+
+基准环境：Apple M 系列或同级 x86，`threads = 1`（N-06 除外），语料为 2,500 段中文 Markdown（约 150 万字），已建好索引。测量方法：仓库提供 `tools/bench.py`，用固定随机种子生成语料和 200 条查询（一半中文短语、一半含标识符）；延迟类指标在同一进程内预热 10 次后采样 200 次取 p95；N-03、N-05 各测 10 次取最大值；N-04 用生成的 1 万个小文件。
+
+| 编号 | 项 | 要求 |
 | --- | --- | --- |
-| 真实 agent 查询 | 32 条 | 关键词词袋式查询 |
-| 人工问题 | 45 条（含 12 条长表格深处的问题） | 自然问句、长表格深处 |
-| 大模型出题测试集 | 310 条（文档未参与训练） | 排序、阈值校准 |
-| 无答案查询 | 171 条 | 误返回率 |
-
-**v1 发布门槛**：
-1. 真实 agent 查询：前 k 条有相关 ≥ 97%、第一条相关 ≥ 85%（不低于"单字 + 相邻两字"基线）。
-2. 人工问题：第一条相关不低于纯融合排序；长表格深处问题前 10 条召回 100%。
-3. 无答案查询：默认阈值下误返回率 ≤ 2%；可答问题返回率 ≥ 90%。
-4. 第 6 节非功能指标全部达标。
-5. 删除索引后重建，四套数据的结果完全一致。
-
----
-
-## 9. 里程碑
-
-| 阶段 | 内容 | 产出 |
-| --- | --- | --- |
-| M0 | 项目骨架、配置、Markdown/TXT 收纳、增量同步、`cjk_bigram` 关键词检索、`search`/`show`/`doctor`、评测工具 | 纯关键词版本，达到验收第 1 条 |
-| M1 | 向量索引、名次融合、精确命中保护、过滤与去重、JSON 输出定稿 | 混合检索 |
-| M2 | 重排 + 校准阈值 + 按名次加权融合、无答案检测与缺口清单、MCP | 验收第 1~3 条 |
-| M3 | Docling 解析（PDF/Office/表格）、引用定位、`ask` 问答与拒答、终端对话 | 人用体验完整 |
-| M4 | `watch`、本地网页（按需启动）、LanceDB 后端、同义词表、性能优化 | v1.0 |
+| N-01 | 查询延迟（不重排） | 不含进程启动，p95 ≤ 200 ms |
+| N-02 | 查询延迟（重排 30 段，13 MB 级模型） | p95 ≤ 1 s |
+| N-03 | 命令行冷启动 | 新进程从执行 `ws search` 到退出 ≤ 2 s（含 Python 启动、加载向量模型、无变化同步） |
+| N-04 | 无变化时的同步开销 | 1 万个文件 ≤ 300 ms |
+| N-05 | 改 1 个 Markdown 文件（约 5 段）后的同步 | 同一进程内，模型已加载时 ≤ 3 s |
+| N-06 | 首次建索引 | 2,500 段 ≤ 5 分钟（4 线程） |
+| N-07 | 内存 | 查询进程常驻 ≤ 1 GB（10 万段规模） |
+| N-08 | 安装体积 | 核心包 + 默认向量模型 ≤ 300 MB；运行时不安装 torch |
+| N-09 | 平台 | macOS、Linux、Windows；Python 3.11 ~ 3.13 |
+| N-10 | 离线 | 模型下载后全程不访问网络 |
 
 ---
 
-## 10. 风险与待决问题
+## 11. 验收标准
 
-| 项 | 说明 | 建议 |
-| --- | --- | --- |
-| 通用重排模型 | 现有 13 MB 重排模型只在单一领域的文档库上有效，跨领域会变差；通用老师 bge-reranker-v2-m3 效果好但 568M 参数，单核太重 | M2 先做"无重排也达标"；重排模型作为可选组件，按领域校准 |
-| Docling 依赖重 | 需要 torch 与版面模型 | 放在 `[docs]` 扩展，核心不依赖；入库机器装即可 |
-| SQLite FTS5 中文 | 默认分词器不切中文；Python 自定义 FTS5 分词器性能差 | 关键词倒排自实现（numpy 稀疏矩阵，参考 bm25s），SQLite 只存元数据 |
-| 规模上限 | 暴力向量检索在 10 万段以上变慢 | 超阈值提示切换 LanceDB 后端 |
-| 许可证 | 依赖：Docling（MIT）、bge 系列（MIT）、LanceDB（Apache-2.0） | 本项目建议 Apache-2.0；发布前逐项核对模型许可 |
-| 名称 | `axc-wensuo` 在 PyPI/GitHub 的可用性 | 已确认 PyPI 未被注册（2026-11-26 查询） |
+### 11.1 功能验收（公开、可复现）
+
+开发者在 `tests/fixtures/corpus/` 下自行构造一个公开的小语料（内容虚构、不含任何真实组织信息），至少包含：多级标题的 Markdown、带文件头 YAML 的 Markdown、含长表格（≥ 100 行）的 Markdown、含代码块的 Markdown、TXT（GB18030 编码一份）、CSV、PDF（≥ 3 页且含表格）、DOCX、PPTX、XLSX（≥ 2 个工作表）。以下每条都必须有自动化测试：
+
+| 编号 | 验收内容 |
+| --- | --- |
+| A-01 | 安装核心包后，`ws search` 在无网络、无常驻进程的情况下可用 |
+| A-02 | `ws mcp` 能被 MCP 客户端拉起并完成 `search` 调用，客户端断开后进程退出 |
+| A-03 | 新增文件后直接 `ws search`，能检索到新文件内容 |
+| A-04 | 修改文件后直接 `ws search`，旧内容检索不到、新内容检索得到；只有该文件被重新解析 |
+| A-05 | 删除文件后直接 `ws search`，该文件的段不再出现 |
+| A-06 | 删除索引目录后再查询，结果与删除前逐条一致 |
+| A-07 | 中文查询命中：查询中的两字词在段中出现即可召回 |
+| A-08 | 标识符查询：`user_id` 能命中含 `user_id` 的段，`user` 也能命中（拆分） |
+| A-09 | 长表格第 90 行内容的查询，结果段含表头行 |
+| A-10 | 专题规则四级优先顺序（文件头 > `scope_rules` > 子目录 > `_root`）各有测试 |
+| A-11 | `scope`、`path_prefix`、`tags`、`file_types`、`modified_after` 过滤各有测试 |
+| A-12 | Markdown 结果的行号区间包含命中文本 |
+| A-13 | PDF 结果的页码正确；XLSX 结果的工作表名和行号正确 |
+| A-14 | 章节路径与原文标题层级一致 |
+| A-15 | 同一 `search` 查询，命令行 JSON、MCP、Python API `to_dict()` 输出完全相同（`stale` 除外） |
+| A-16 | 退出码 0/1/2/3 四种情况各有测试 |
+| A-17 | `--format json` 的标准输出能被 JSON 解析，且符合第 8.3 节结构 |
+| A-18 | 查询含知识库中不存在的标识符时，`missing_identifiers` 列出它，并记入缺口清单 |
+| A-19 | 测试中用 `onnx` 库（仅测试依赖）在运行时生成按输入输出固定 logits 的小模型，放入临时 `model_dir`，不为测试增加生产代码接口。验证：低于 `min_score` 的段被丢弃，全部低于时结果为空、退出码 1 |
+| A-20 | 未开启重排时传 `--min-score`，退出码 2 |
+| A-21 | 第 7.4 节按名次加权公式与标识符分层，用假重排模型验证排序 |
+| A-22 | 未安装 `docs` 扩展时，PDF 等文件出现在 `ws doctor` 的跳过列表，其余文件正常检索 |
+| A-23 | 解析失败的文件出现在 `ws doctor`，且文件不变时不重试 |
+| A-24 | 两个进程同时同步，不损坏索引；一个同步时另一个查询返回 `stale: true` |
+| A-25 | 同一输入重复查询 100 次，结果顺序完全一致 |
+
+### 11.2 检索质量验收（维护者本地执行）
+
+维护者持有基于自有文档库构造的私有评测集（放在 `eval/private/`，不入库）。开发者只需保证 `ws eval` 能读取第 11.3 节格式并输出指标；维护者用默认配置（无重排）执行，必须达到：
+
+| 编号 | 数据 | 指标 | 门槛 |
+| --- | --- | --- | --- |
+| Q-01 | agent 真实查询，32 条（每条自带 `k`） | 前 k 条有相关 / 第一条相关 | ≥ 96% / ≥ 84% |
+| Q-02 | 人工问题，45 条 | 前 5 条有相关 | 不低于同一数据上纯关键词模式（`--modes lexical`）的结果 |
+| Q-03 | 无答案查询，171 条（配置维护者的重排模型） | 误返回率 / 可答问题返回率 | ≤ 2% / ≥ 90% |
+
+Q-01、Q-02 不达标时，允许调整第 7.3 节的 `w_dense` 默认值；不允许为通过评测而修改评测数据。开发者只负责 `ws eval` 指标计算正确（用 11.1 的公开语料构造小评测集测试），不对 Q-* 数值负责；Q-* 由维护者执行并决定是否通过。
+
+### 11.3 评测集格式（`ws eval`）
+
+jsonl，每行一个对象：
+
+```json
+{"id": "q1", "query": "……", "relevant": [{"doc_id": "a/b.md", "title_path": ["标题"]}], "k": 5}
+{"id": "q2", "query": "……", "no_answer": true}
+```
+
+- 结果段的 `doc_id` 相同，且其 `title_path` 以 `relevant` 中给出的 `title_path` 为前缀（未给 `title_path` 时只比 `doc_id`），即视为相关。
+- `k` 省略时用命令行 `--k`。
+- 输出指标（每种模式）：
+  - `hit_at_k`：有 `relevant` 的查询中，前 k 条至少一条相关的比例。
+  - `top1`：有 `relevant` 的查询中，第一条相关的比例。
+  - `mrr_at_k`：第一条相关结果名次倒数的平均（前 k 条没有相关记 0）。
+  - `answerable_return_rate`：有 `relevant` 的查询中，返回至少一条结果的比例。
+  - `false_return_rate`：`no_answer` 查询中，返回至少一条结果的比例。
+- 模式含义：`lexical` 只用关键词召回；`dense` 只用向量召回；`fused` 为默认流水线不重排；`rerank` 为默认流水线加重排（未配置重排模型时选它报参数错误）。各模式都执行标识符分层和 `max_per_doc`。
 
 ---
 
-## 附：可直接复用的现有资产
+## 12. 代码结构
 
-- 切段、增量同步、`cjk_bigram` 分词、名次融合、评测脚本的原型实现（约 800 行），以及评测集的构造方法。
-- 13 MB 中文重排 ONNX 模型（附校准参数，限单一领域，仅本地使用，不随仓库发布）。
-- bge-small-zh 向量模型的 ONNX 封装与固定版本校验方式。
+```text
+src/axc_wensuo/
+  __init__.py        # 导出 KnowledgeBase、异常类、__version__
+  errors.py          # WenSuoError、ConfigError、WenSuoRuntimeError
+  config.py          # 全局配置与 wensuo.yaml 的加载、校验、合并
+  models.py          # Document、Chunk、Location、SearchHit、SearchResult、SyncReport 等 dataclass
+  source.py          # 目录扫描、收纳规则、专题规则、变化检测
+  parsers/           # markdown.py、text.py、table.py、docling.py；按扩展名注册
+  chunker.py         # 第 6.3 节切段
+  tokenizers.py      # cjk_bigram、jieba
+  lexical.py         # BM25 倒排索引
+  dense.py           # ONNX 向量模型与向量存储
+  rerank.py          # ONNX 交叉编码器与校准
+  search.py          # 召回、融合、分层、重排、过滤、阈值
+  store.py           # SQLite 存储（WAL 模式）与文件锁
+  gaps.py            # 缺口清单
+  evaluate.py        # ws eval
+  kb.py              # KnowledgeBase 门面
+  cli.py             # 命令行
+  mcp_server.py      # MCP
+tools/export_embedder.py
+tests/
+```
+
+- **FR-1201** 存储：索引目录下一个 SQLite 文件 `index.sqlite`（WAL 模式），存文档、段、倒排表、向量（float16 BLOB）、同步状态、解析失败记录、缺口清单；Docling 解析缓存存在 `parsed/` 子目录。整个索引目录可拷贝到另一台机器直接使用（同路径结构下）。
+- **FR-1202** 代码风格：Tab 缩进，行宽 120，ruff 检查通过；测试用 pytest；包管理用 uv。
+
+---
+
+## 13. 风险与已定对策
+
+| 风险 | 对策（已定，开发时照此执行） |
+| --- | --- |
+| 通用重排模型缺失：现有小模型跨领域会变差，通用大模型单核太慢 | 重排默认关闭，作为用户自带的可选组件；默认配置只靠关键词 + 向量 + 标识符分层达到 Q-01、Q-02 |
+| 向量召回在 agent 查询上偏弱，简单融合会压低关键词精确命中 | `w_dense = 0.5` 加标识符分层（FR-602、FR-603）；按 Q-01 结果调 `w_dense` |
+| Docling 依赖重（需要 torch 与版面模型） | 放在 `docs` 扩展；核心安装不带它；未安装时跳过相应文件并在 `doctor` 中提示 |
+| SQLite FTS5 默认不切中文 | 不用 FTS5，倒排表自实现（FR-501、FR-503） |
+| 首次给大量 PDF 建索引很慢 | 同步显示进度（FR-208）；`--threads` 可调；首次同步期间其他进程查询返回 `stale: true`（FR-207） |
+| 许可证 | 本项目 Apache-2.0；依赖 Docling（MIT）、bge-small-zh-v1.5（MIT）、onnxruntime（MIT）、tokenizers（Apache-2.0）、filelock（Unlicense）、PyYAML（MIT）、mcp（MIT） |
+
+---
+
+## 附：维护者已有的原型
+
+维护者有一个约 800 行的原型，已实现切段、增量同步、`cjk_bigram` 分词、RRF 融合和评测脚本，第 1.3 节的数据由它测得。原型不随仓库发布；本文档已覆盖其全部行为，开发以本文档为准。
