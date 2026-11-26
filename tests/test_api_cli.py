@@ -7,7 +7,7 @@ import socket
 import sys
 
 import pytest
-from helpers import run_cli, write
+from helpers import run_cli, search, write
 
 DOC = '# 甲文档\n\n蓝色鲸鱼在深海游动。\n'
 
@@ -29,7 +29,6 @@ def test_cli_exit_codes(kb_factory):
 	assert payload['error']['code'] == 2
 	assert payload['schema_version'] == 1
 
-
 def test_missing_model_is_runtime_error(tmp_path):
 	root = tmp_path / 'kb'
 	root.mkdir()
@@ -42,7 +41,6 @@ def test_missing_model_is_runtime_error(tmp_path):
 	assert result.returncode == 3
 	assert json.loads(result.stdout)['error']['code'] == 3
 
-
 def test_cli_text_format(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
 	result = run_cli(kb.root, 'search', '鲸鱼')
@@ -52,7 +50,6 @@ def test_cli_text_format(kb_factory):
 	assert lines[1] == '甲文档'
 	assert any('鲸鱼' in line for line in lines[2:])
 
-
 def test_cli_text_missing_identifiers_and_truncation(kb_factory):
 	kb = kb_factory({'甲.md': '# 甲\n\n' + '长内容' * 50 + '\n'})
 	result = run_cli(kb.root, 'search', 'zz_flag 长内容', '--max-chars', '20')
@@ -61,7 +58,6 @@ def test_cli_text_missing_identifiers_and_truncation(kb_factory):
 	assert lines[1] == ''
 	assert lines[2].startswith('[1] ')
 	assert lines[-1].endswith('…')
-
 
 def test_cli_json_structure(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
@@ -89,7 +85,6 @@ def test_cli_json_structure(kb_factory):
 	}
 	assert hit['location']['kind'] == 'lines'
 	assert hit['sources']['lexical'] >= 1
-
 
 def test_cli_docs_scopes_doctor_gaps(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
@@ -127,7 +122,6 @@ def test_cli_docs_scopes_doctor_gaps(kb_factory):
 	run_cli(kb.root, 'gaps', '--clear')
 	assert json.loads(run_cli(kb.root, 'gaps', '--format', 'json').stdout)['gaps'] == []
 
-
 def test_cli_read_text_and_offsets(kb_factory):
 	text = '# 标题\n\n第一段内容。\n'
 	kb = kb_factory({'甲.md': text})
@@ -140,23 +134,20 @@ def test_cli_read_text_and_offsets(kb_factory):
 	assert payload['text'] == text[2:7]
 	assert payload['next_offset'] == 7
 
-
 def test_cli_version_and_help():
 	assert 'ws ' in run_cli('.', '--version').stdout
 	help_result = run_cli('.')
 	assert help_result.returncode == 0
 	assert 'usage: ws' in help_result.stdout
 
-
 def test_python_api_matches_cli_json(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
 	kb.sync()
-	api = kb.search('鲸鱼', sync=False).to_dict()
+	api = search(kb, '鲸鱼', sync=False).to_dict()
 	cli = json.loads(run_cli(kb.root, 'search', '鲸鱼', '--format', 'json', '--no-sync').stdout)
 	api.pop('stale')
 	cli.pop('stale')
 	assert api == cli
-
 
 def test_mcp_matches_cli_json(kb_factory):
 	pytest.importorskip('mcp')
@@ -191,7 +182,6 @@ def test_mcp_matches_cli_json(kb_factory):
 	payload.pop('stale')
 	assert payload == cli
 
-
 def test_offline_search_does_not_open_socket(kb_factory, monkeypatch):
 	kb = kb_factory({'甲.md': DOC})
 	kb.sync()
@@ -201,9 +191,8 @@ def test_offline_search_does_not_open_socket(kb_factory, monkeypatch):
 
 	monkeypatch.setattr(socket, 'socket', blocked)
 	monkeypatch.setattr(socket, 'create_connection', blocked)
-	result = kb.search('鲸鱼', sync=False)
+	result = search(kb, '鲸鱼', sync=False)
 	assert result.results
-
 
 def test_models_download_reports_unpublished(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
@@ -211,14 +200,12 @@ def test_models_download_reports_unpublished(kb_factory):
 	assert result.returncode == 3
 	assert '尚未发布' in result.stderr
 
-
 def test_cli_sync_text_report_goes_to_stderr(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
 	result = run_cli(kb.root, 'sync')
 	assert result.returncode == 0
 	assert result.stdout == ''
 	assert '新增 1' in result.stderr
-
 
 def test_mcp_server_exits_when_client_disconnects(kb_factory):
 	pytest.importorskip('mcp')
@@ -235,7 +222,6 @@ def test_mcp_server_exits_when_client_disconnects(kb_factory):
 	process.stdin.close()
 	assert process.wait(timeout=30) == 0
 
-
 def test_cli_argparse_error_json(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
 	result = run_cli(kb.root, 'search', '--top-k', 'abc', '--format', 'json')
@@ -244,10 +230,21 @@ def test_cli_argparse_error_json(kb_factory):
 	assert payload['error']['code'] == 2
 	assert 'top-k' in payload['error']['message']
 
-
 def test_sync_progress_for_many_files(kb_factory):
 	files = {f'文档/{index:02d}.md': f'# 文档 {index}\n\n内容 {index}。\n' for index in range(25)}
 	kb = kb_factory(files)
 	result = run_cli(kb.root, 'sync')
 	assert result.returncode == 0
 	assert '同步 25/25' in result.stderr
+
+def test_corrupt_index_is_runtime_error(kb_factory):
+	kb = kb_factory({'甲.md': DOC})
+	kb.sync()
+	index_dir = kb.config.index_dir
+	kb.close()
+	for name in ('index.sqlite', 'index.sqlite-wal', 'index.sqlite-shm'):
+		(index_dir / name).unlink(missing_ok=True)
+	(index_dir / 'index.sqlite').write_bytes(b'not a sqlite database')
+	result = run_cli(kb.root, 'search', '鲸鱼')
+	assert result.returncode == 3
+	assert '无法打开索引' in result.stderr

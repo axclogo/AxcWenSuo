@@ -1,8 +1,4 @@
-"""Markdown 解析（FR-301）。
-
-按行扫描，保留标题层级、段落、列表、代码块（代码块内的 ``#`` 不当标题）和管道表格，并记录
-每个块在原文中的字符偏移与行号，供切段与 ``location`` 使用。
-"""
+"""Markdown parser. Markdown 解析器。"""
 
 from __future__ import annotations
 
@@ -46,7 +42,6 @@ def parse_markdown(doc_id: str, text: str) -> ParsedDocument:
 		warnings=warnings,
 	)
 
-
 def _offsets(lines: list[str]) -> list[int]:
 	offsets: list[int] = []
 	position = 0
@@ -56,10 +51,8 @@ def _offsets(lines: list[str]) -> list[int]:
 	offsets.append(position)
 	return offsets
 
-
 def _line_end(offsets: list[int], lines: list[str], index: int) -> int:
 	return offsets[index] + len(lines[index].rstrip('\r\n'))
-
 
 def _front_matter(lines: list[str]) -> tuple[dict[str, Any], int, list[str]]:
 	if not lines or lines[0].strip() != '---':
@@ -83,75 +76,69 @@ def _front_matter(lines: list[str]) -> tuple[dict[str, Any], int, list[str]]:
 	meta = {key: data[key] for key in META_KEYS if key in data}
 	return meta, end + 1, []
 
-
 def _parse_blocks(text: str, lines: list[str], offsets: list[int], start: int) -> list[Block]:
 	blocks: list[Block] = []
 	index = start
-	total = len(lines)
-	while index < total:
+	while index < len(lines):
 		line = lines[index]
 		if not line.strip():
 			index += 1
 			continue
 		heading = HEADING_RE.match(line.rstrip('\r\n'))
 		if heading is not None:
-			blocks.append(
-				Block(
-					kind='heading',
-					start=offsets[index],
-					end=_line_end(offsets, lines, index),
-					text=text[offsets[index] : _line_end(offsets, lines, index)],
-					line_start=index + 1,
-					line_end=index + 1,
-					level=len(heading.group(1)),
-					label=clean_heading(heading.group(2)),
-				)
-			)
+			blocks.append(_heading_block(text, lines, offsets, index, heading))
 			index += 1
 			continue
-		fence = FENCE_RE.match(line.rstrip('\r\n'))
-		if fence is not None:
-			end = _fence_end(lines, index, fence.group(1))
-			blocks.append(_block(kind='code', text=text, lines=lines, offsets=offsets, start=index, end=end))
-			index = end + 1
-			continue
-		if _is_table_start(lines, index):
-			row_lines, rows, end = _parse_table(lines, index)
-			table = Table(rows=rows, header_rows=1, row_lines=row_lines)
-			blocks.append(
-				Block(
-					kind='table',
-					start=offsets[index],
-					end=_line_end(offsets, lines, end),
-					text='',
-					line_start=index + 1,
-					line_end=end + 1,
-					table=table,
-				)
-			)
-			index = end + 1
-			continue
-		if LIST_RE.match(line) is not None:
-			end = _list_end(lines, index)
-			blocks.append(_block(kind='list', text=text, lines=lines, offsets=offsets, start=index, end=end))
-			index = end + 1
-			continue
-		end = _paragraph_end(lines, index)
-		blocks.append(_block(kind='paragraph', text=text, lines=lines, offsets=offsets, start=index, end=end))
-		index = end + 1
+		block, index = _line_block(text, lines, offsets, index)
+		blocks.append(block)
 	return blocks
 
-
-def _block(*, kind: str, text: str, lines: list[str], offsets: list[int], start: int, end: int) -> Block:
+def _heading_block(text: str, lines: list[str], offsets: list[int], index: int, heading: re.Match) -> Block:
 	return Block(
-		kind=kind,
-		start=offsets[start],
-		end=_line_end(offsets, lines, end),
-		text=text[offsets[start] : _line_end(offsets, lines, end)],
-		line_start=start + 1,
-		line_end=end + 1,
+		kind='heading',
+		start=offsets[index],
+		end=_line_end(offsets, lines, index),
+		text=text[offsets[index] : _line_end(offsets, lines, index)],
+		line_start=index + 1,
+		line_end=index + 1,
+		level=len(heading.group(1)),
+		label=clean_heading(heading.group(2)),
 	)
 
+def _line_block(text: str, lines: list[str], offsets: list[int], index: int) -> tuple[Block, int]:
+	def make(kind: str, first: int, last: int) -> Block:
+		return Block(
+			kind=kind,
+			start=offsets[first],
+			end=_line_end(offsets, lines, last),
+			text=text[offsets[first] : _line_end(offsets, lines, last)],
+			line_start=first + 1,
+			line_end=last + 1,
+		)
+
+	line = lines[index]
+	fence = FENCE_RE.match(line.rstrip('\r\n'))
+	if fence is not None:
+		end = _fence_end(lines, index, fence.group(1))
+		return make('code', index, end), end + 1
+	if _is_table_start(lines, index):
+		row_lines, rows, end = _parse_table(lines, index)
+		table = Table(rows=rows, header_rows=1, row_lines=row_lines)
+		block = Block(
+			kind='table',
+			start=offsets[index],
+			end=_line_end(offsets, lines, end),
+			text='',
+			line_start=index + 1,
+			line_end=end + 1,
+			table=table,
+		)
+		return block, end + 1
+	if LIST_RE.match(line) is not None:
+		end = _list_end(lines, index)
+		return make('list', index, end), end + 1
+	end = _paragraph_end(lines, index)
+	return make('paragraph', index, end), end + 1
 
 def _fence_end(lines: list[str], start: int, marker: str) -> int:
 	char = marker[0]
@@ -161,7 +148,6 @@ def _fence_end(lines: list[str], start: int, marker: str) -> int:
 		if stripped and set(stripped) == {char} and len(stripped) >= length:
 			return index
 	return len(lines) - 1
-
 
 def _paragraph_end(lines: list[str], start: int) -> int:
 	index = start + 1
@@ -179,7 +165,6 @@ def _paragraph_end(lines: list[str], start: int) -> int:
 			break
 		index += 1
 	return index - 1
-
 
 def _list_end(lines: list[str], start: int) -> int:
 	index = start + 1
@@ -200,14 +185,12 @@ def _list_end(lines: list[str], start: int) -> int:
 		index += 1
 	return index - 1
 
-
 def _is_table_start(lines: list[str], index: int) -> bool:
 	if index + 1 >= len(lines):
 		return False
 	if '|' not in lines[index] or not lines[index].strip():
 		return False
 	return _is_separator(lines[index + 1])
-
 
 def _is_separator(line: str) -> bool:
 	stripped = line.strip()
@@ -217,7 +200,6 @@ def _is_separator(line: str) -> bool:
 	if len(cells) < 2:
 		return False
 	return all(SEPARATOR_CELL_RE.match(cell.strip()) for cell in cells)
-
 
 def _split_row(line: str) -> list[str]:
 	stripped = line.strip()
@@ -243,7 +225,6 @@ def _split_row(line: str) -> list[str]:
 		index += 1
 	cells.append(''.join(buffer).strip())
 	return cells
-
 
 def _parse_table(lines: list[str], start: int) -> tuple[list[int], list[list[str]], int]:
 	rows: list[list[str]] = []

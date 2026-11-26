@@ -1,8 +1,4 @@
-"""BM25 关键词索引（FR-501 ~ FR-504）。
-
-倒排表存在 SQLite 中（``terms`` / ``postings``）；查询时只读取查询词对应的倒排行，内存占用与
-库大小无关。``N``、``avgdl``、``df`` 都在查询时读取，保证增量同步后立即可用。
-"""
+"""BM25 lexical index. BM25 关键词索引。"""
 
 from __future__ import annotations
 
@@ -22,7 +18,6 @@ class LexicalHit:
 	chunk_id: str
 	score: float
 
-
 class LexicalIndex:
 	def __init__(self, store: Store, config: LexicalConfig, tokenizer: Tokenizer) -> None:
 		self.store = store
@@ -30,7 +25,7 @@ class LexicalIndex:
 		self.tokenizer = tokenizer
 
 	def term_frequencies(self, text: str, meta_text: str) -> tuple[Counter[str], Counter[str]]:
-		"""段正文与元信息（标题、别名、章节路径）分别分词计数（FR-503）。"""
+		"""Count body and meta tokens separately. 分别统计正文与元信息词频。"""
 		return self.tokenizer.counts(text), self.tokenizer.counts(meta_text)
 
 	def weighted_length(self, body: Counter[str], meta: Counter[str]) -> float:

@@ -1,12 +1,7 @@
-"""可选重排（FR-611 ~ FR-615）：ONNX 交叉编码器 + 温度/偏置校准。
-
-模型目录必须包含 ``model.onnx``、``tokenizer.json``、``model_meta.json``。重排默认关闭，由用户
-在 ``wensuo.yaml`` 的 ``rerank.model_dir`` 指向模型目录开启。本项目不自带重排模型。
-"""
+"""Optional ONNX reranker. 可选 ONNX 重排器。"""
 
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from axc_wensuo.errors import WenSuoRuntimeError
+from axc_wensuo.hashing import file_sha256
 
 REQUIRED_META_FIELDS = ('max_length', 'temperature', 'bias', 'default_min_score')
 
@@ -26,7 +22,6 @@ class RerankMeta:
 	temperature: float
 	bias: float
 	default_min_score: float
-
 
 def load_rerank_meta(model_dir: str | Path) -> RerankMeta:
 	directory = Path(model_dir)
@@ -61,31 +56,26 @@ def load_rerank_meta(model_dir: str | Path) -> RerankMeta:
 		default_min_score=default_min_score,
 	)
 
-
 def _positive_int(value: object, name: str) -> int:
 	if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
 		raise WenSuoRuntimeError(f'重排模型 model_meta.json 的 {name} 必须是正整数')
 	return value
-
 
 def _number(value: object, name: str) -> float:
 	if isinstance(value, bool) or not isinstance(value, (int, float)):
 		raise WenSuoRuntimeError(f'重排模型 model_meta.json 的 {name} 必须是数字')
 	return float(value)
 
-
 def rerank_model_identity(model_dir: str | Path) -> str | None:
-	"""重排模型身份：``model.onnx`` 的 SHA-256 前 16 位，用于 doctor 展示。"""
+	"""Rerank identity for doctor. 供 doctor 展示的重排身份。"""
 	path = Path(model_dir) / 'model.onnx'
 	if not path.is_file():
 		return None
-	return _file_sha256(path)[:16]
-
+	return file_sha256(path)[:16]
 
 def rerank_ready(model_dir: str | Path) -> bool:
 	directory = Path(model_dir)
 	return all((directory / name).is_file() for name in ('model.onnx', 'tokenizer.json', 'model_meta.json'))
-
 
 class Reranker:
 	def __init__(self, model_dir: str | Path, *, threads: int | None = None) -> None:
@@ -112,7 +102,7 @@ class Reranker:
 			raise WenSuoRuntimeError(f'重排模型没有输出：{directory / "model.onnx"}')
 		self.output_name = outputs[0].name
 		self.cls_id, self.sep_id = self._special_ids()
-		self.identity = _file_sha256(directory / 'model.onnx')[:16]
+		self.identity = file_sha256(directory / 'model.onnx')[:16]
 
 	def _special_ids(self) -> tuple[int, int]:
 		cls = self.tokenizer.token_to_id('[CLS]')
@@ -131,9 +121,6 @@ class Reranker:
 		passage_ids = list(self.tokenizer.encode(passage, add_special_tokens=False).ids)[:available]
 		return [self.cls_id, *query_ids, self.sep_id, *passage_ids, self.sep_id]
 
-	def _query_type_ids(self, sequence: list[int]) -> list[int]:
-		return [0] * len(sequence)
-
 	def _run(self, sequences: list[list[int]]) -> np.ndarray:
 		max_length = max(len(sequence) for sequence in sequences)
 		input_ids = np.zeros((len(sequences), max_length), dtype=np.int64)
@@ -144,7 +131,7 @@ class Reranker:
 			attention[row, : len(sequence)] = 1
 			sep_positions = [index for index, token in enumerate(sequence) if token == self.sep_id]
 			if len(sep_positions) >= 2:
-				# 第一段（查询 + [SEP]）用 0，第二段（段落 + [SEP]）用 1
+				# Query segment 0, passage segment 1. 查询段用 0，段落段用 1。
 				type_ids[row, sep_positions[0] + 1 :] = 1
 		feeds: dict[str, np.ndarray] = {'input_ids': input_ids, 'attention_mask': attention}
 		if 'token_type_ids' in self.input_names:
@@ -171,14 +158,4 @@ class Reranker:
 			logits.extend(float(value) for value in batch_logits)
 		calibrated = 1.0 / (1.0 + np.exp(-(np.asarray(logits) / self.meta.temperature + self.meta.bias)))
 		return [float(value) for value in calibrated]
-
-
-def _file_sha256(path: Path) -> str:
-	digest = hashlib.sha256()
-	with path.open('rb') as handle:
-		for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-			digest.update(chunk)
-	return digest.hexdigest()
-
-
 __all__ = ['Reranker', 'RerankMeta', 'load_rerank_meta', 'rerank_model_identity', 'rerank_ready']

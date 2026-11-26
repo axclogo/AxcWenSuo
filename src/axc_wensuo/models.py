@@ -1,8 +1,4 @@
-"""对外数据结构（dataclass）。
-
-每个结构的 ``to_dict()`` 输出即需求第 8.3 节的 JSON；字段只增不改，改动已有字段含义时
-``schema_version`` 加 1。所有结构都是纯数据，不持有数据库连接或模型。
-"""
+"""Public dataclasses and JSON structures. 对外数据结构和 JSON 结构。"""
 
 from __future__ import annotations
 
@@ -12,19 +8,9 @@ from typing import Any
 SCHEMA_VERSION = 1
 
 
-def _drop_none(data: dict[str, Any]) -> dict[str, Any]:
-	"""去掉值为 None 的键，用于可选字段。"""
-	return {key: value for key, value in data.items() if value is not None}
-
-
 @dataclass(frozen=True)
 class Location:
-	"""段在原文中的位置。
-
-	``kind`` 为 ``lines`` 时用 ``start`` / ``end``（1 起始行号，闭区间）；``page``、``slide``
-	用页码 / 幻灯片号；``sheet`` 用 ``sheet`` + ``row_start`` / ``row_end``；``section`` 没有
-	数字位置。
-	"""
+	"""Location in the source. 段在原文中的位置。"""
 
 	kind: str
 	start: int | None = None
@@ -52,7 +38,7 @@ class Location:
 		)
 
 	def union(self, other: Location) -> Location:
-		"""合并两个位置；位置种类不同时保留自身。"""
+		"""Merge two locations. 合并两个位置。"""
 		if other is None or other.kind != self.kind:
 			return self
 		if self.kind in ('lines', 'page', 'slide'):
@@ -71,14 +57,12 @@ class Location:
 			)
 		return self
 
-
 @dataclass(frozen=True)
 class ScopeRule:
-	"""``wensuo.yaml`` 中的一条专题规则。"""
+	"""One scope rule. 一条专题规则。"""
 
 	glob: str
 	scope: str
-
 
 @dataclass
 class Document:
@@ -98,7 +82,6 @@ class Document:
 			'chunks': self.chunks,
 			'modified': self.modified,
 		}
-
 
 @dataclass
 class SearchHit:
@@ -129,7 +112,6 @@ class SearchHit:
 			'truncated': self.truncated,
 		}
 
-
 @dataclass
 class SearchResult:
 	query: str
@@ -150,10 +132,9 @@ class SearchResult:
 			'results': [hit.to_dict() for hit in self.results],
 		}
 
-
 @dataclass
 class ChunkDetail:
-	"""``show`` / ``read`` 返回的单段信息。"""
+	"""Chunk detail returned by show/read. show/read 返回的段信息。"""
 
 	chunk_id: str
 	doc_id: str
@@ -178,7 +159,6 @@ class ChunkDetail:
 			'truncated': False,
 		}
 
-
 @dataclass
 class ReadResult:
 	doc_id: str
@@ -201,14 +181,12 @@ class ReadResult:
 			'next_offset': self.next_offset,
 		}
 
-
 @dataclass
 class DocsResult:
 	docs: list[Document]
 
 	def to_dict(self) -> dict[str, Any]:
 		return {'schema_version': SCHEMA_VERSION, 'docs': [doc.to_dict() for doc in self.docs]}
-
 
 @dataclass
 class ScopeInfo:
@@ -219,14 +197,12 @@ class ScopeInfo:
 	def to_dict(self) -> dict[str, Any]:
 		return {'scope': self.scope, 'description': self.description, 'docs': self.docs}
 
-
 @dataclass
 class ScopesResult:
 	scopes: list[ScopeInfo]
 
 	def to_dict(self) -> dict[str, Any]:
 		return {'schema_version': SCHEMA_VERSION, 'scopes': [scope.to_dict() for scope in self.scopes]}
-
 
 @dataclass
 class SyncReport:
@@ -250,7 +226,6 @@ class SyncReport:
 			'seconds': self.seconds,
 		}
 
-
 @dataclass
 class SkippedEntry:
 	doc_id: str
@@ -259,7 +234,6 @@ class SkippedEntry:
 	def to_dict(self) -> dict[str, Any]:
 		return {'doc_id': self.doc_id, 'reason': self.reason}
 
-
 @dataclass
 class FailedEntry:
 	doc_id: str
@@ -267,7 +241,6 @@ class FailedEntry:
 
 	def to_dict(self) -> dict[str, Any]:
 		return {'doc_id': self.doc_id, 'reason': self.reason}
-
 
 @dataclass
 class DoctorResult:
@@ -301,7 +274,6 @@ class DoctorResult:
 			'index_bytes': self.index_bytes,
 		}
 
-
 @dataclass
 class GapEntry:
 	query: str
@@ -325,14 +297,12 @@ class GapEntry:
 			'missing_identifiers': list(self.missing_identifiers),
 		}
 
-
 @dataclass
 class GapsResult:
 	gaps: list[GapEntry]
 
 	def to_dict(self) -> dict[str, Any]:
 		return {'schema_version': SCHEMA_VERSION, 'gaps': [gap.to_dict() for gap in self.gaps]}
-
 
 @dataclass
 class EvalModeMetrics:
@@ -353,7 +323,6 @@ class EvalModeMetrics:
 			'n': self.n,
 		}
 
-
 @dataclass
 class EvalResult:
 	k: int
@@ -365,7 +334,6 @@ class EvalResult:
 			'k': self.k,
 			'modes': {name: metrics.to_dict() for name, metrics in self.modes.items()},
 		}
-
 
 @dataclass
 class ErrorResult:

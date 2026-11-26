@@ -18,7 +18,6 @@ def _write_queries(tmp_path, rows) -> str:
 	path.write_text('\n'.join(json.dumps(row, ensure_ascii=False) for row in rows) + '\n', encoding='utf-8')
 	return str(path)
 
-
 def test_eval_metrics(kb_factory, tmp_path):
 	kb = kb_factory(DOCS)
 	path = _write_queries(
@@ -41,7 +40,6 @@ def test_eval_metrics(kb_factory, tmp_path):
 		assert metrics.n == 4
 	assert result.k == 5
 
-
 def test_eval_title_path_mismatch(kb_factory, tmp_path):
 	kb = kb_factory(DOCS)
 	path = _write_queries(
@@ -50,7 +48,6 @@ def test_eval_title_path_mismatch(kb_factory, tmp_path):
 	)
 	result = kb.evaluate(path, ['lexical'], k=5)
 	assert result.modes['lexical'].hit_at_k == 0.0
-
 
 def test_eval_per_query_k(kb_factory, tmp_path):
 	kb = kb_factory(
@@ -70,7 +67,6 @@ def test_eval_per_query_k(kb_factory, tmp_path):
 	# q1 只取前 1 条，高频文档排在前面 → 未命中；q2 取前 5 条 → 命中
 	assert result.modes['lexical'].hit_at_k == pytest.approx(0.5)
 
-
 def test_eval_null_metrics(kb_factory, tmp_path):
 	kb = kb_factory(DOCS)
 	only_no_answer = _write_queries(tmp_path, [{'id': 'q1', 'query': '火车', 'no_answer': True}])
@@ -85,13 +81,11 @@ def test_eval_null_metrics(kb_factory, tmp_path):
 	metrics = kb.evaluate(only_answer, ['lexical'], k=5).modes['lexical']
 	assert metrics.false_return_rate is None
 
-
 def test_eval_does_not_record_gaps(kb_factory, tmp_path):
 	kb = kb_factory(DOCS)
 	path = _write_queries(tmp_path, [{'id': 'q1', 'query': '不存在标识 zz_flag', 'no_answer': True}])
 	kb.evaluate(path, ['lexical'], k=5)
 	assert kb.gaps().gaps == []
-
 
 def test_eval_invalid_file(kb_factory, tmp_path):
 	kb = kb_factory(DOCS)
@@ -102,7 +96,6 @@ def test_eval_invalid_file(kb_factory, tmp_path):
 	bad.write_text(json.dumps({'query': 'x'}) + '\n', encoding='utf-8')
 	with pytest.raises(ConfigError):
 		kb.evaluate(str(bad), ['lexical'], k=5)
-
 
 def test_eval_cli(kb_factory, tmp_path):
 	kb = kb_factory(DOCS)

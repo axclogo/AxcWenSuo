@@ -32,8 +32,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-docs = ["docling>=2.0"]
-mcp = ["mcp>=1.2"]
+docs = ["docling>=2.153,<3"]
+mcp = ["mcp>=2.3,<3"]
 
 [project.scripts]
 ws = "axc_wensuo.cli:main"
@@ -46,7 +46,7 @@ Changelog = "https://github.com/axclogo/AxcWenSuo/blob/main/CHANGELOG.md"
 Issues = "https://github.com/axclogo/AxcWenSuo/issues"
 
 [dependency-groups]
-dev = ["onnx>=1.16", "pytest>=8.0", "ruff>=0.6", "mcp>=1.2"]
+dev = ["onnx>=1.16", "pytest>=8.0", "ruff>=0.6", "mcp>=2.3,<3"]
 
 [tool.hatch.version]
 path = "src/axc_wensuo/__init__.py"
@@ -63,10 +63,6 @@ line-length = 120
 extend-exclude = ["docs", "tests/fixtures"]
 target-version = "py311"
 
-[tool.ruff.format]
-indent-style = "tab"
-quote-style = "single"
-
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = ["W191", "E101"]
+ignore = ["W191", "E101", "E302", "E305"]

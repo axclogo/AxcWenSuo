@@ -108,9 +108,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "docling", marker = "extra == 'docs'", specifier = ">=2.0" },
+    { name = "docling", marker = "extra == 'docs'", specifier = ">=2.153,<3" },
     { name = "filelock", specifier = ">=3.12" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.3,<3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "onnxruntime", specifier = ">=1.18" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -120,7 +120,7 @@ provides-extras = ["docs", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=2.3,<3" },
     { name = "onnx", specifier = ">=1.16" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },

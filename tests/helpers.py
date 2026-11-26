@@ -1,9 +1,11 @@
-"""测试辅助：写文件、构建假的 ONNX 向量模型与重排模型（A-19、A-21 的做法）。"""
+"""Test helpers: fake ONNX models and CLI runner. 测试辅助：假 ONNX 模型与 CLI 运行器。"""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -18,20 +20,17 @@ def write(root: Path, relative: str, content: str, *, encoding: str = 'utf-8') -
 	path.write_text(content, encoding=encoding)
 	return path
 
-
 def _vocab(texts: list[str]) -> dict[str, int]:
 	vocab = {'[UNK]': 0}
 	for character in sorted({character for text in texts for character in text}):
 		vocab[character] = len(vocab)
 	return vocab
 
-
 def _write_tokenizer(model_dir: Path, vocab: dict[str, int]) -> None:
 	tokenizer = Tokenizer(models.WordLevel(vocab=vocab, unk_token='[UNK]'))
 	tokenizer.pre_tokenizer = pre_tokenizers.Split(Regex('[\\s\\S]'), behavior='isolated')
 	tokenizer.add_special_tokens(['[CLS]', '[SEP]'])
 	tokenizer.save(str(model_dir / 'tokenizer.json'))
-
 
 def _inputs() -> list:
 	return [
@@ -40,7 +39,6 @@ def _inputs() -> list:
 		helper.make_tensor_value_info('token_type_ids', TensorProto.INT64, ['batch', 'seq']),
 	]
 
-
 def _save(model_dir: Path, nodes: list, outputs: list) -> None:
 	graph = helper.make_graph(nodes, 'fake-model', _inputs(), outputs)
 	model = helper.make_model(graph, opset_imports=[helper.make_opsetid('', 17)], producer_name='wensuo-tests')
@@ -48,9 +46,8 @@ def _save(model_dir: Path, nodes: list, outputs: list) -> None:
 	onnx.checker.check_model(model)
 	onnx.save(model, str(model_dir / 'model.onnx'))
 
-
 def make_embedder_dir(model_dir: Path, texts: list[str]) -> Path:
-	"""按字符查表的假向量模型：字符 one-hot，共享字符越多点积越高。"""
+	"""Fake char-lookup embedder. 按字符查表的假向量模型。"""
 	model_dir.mkdir(parents=True, exist_ok=True)
 	vocab = _vocab(texts)
 	_write_tokenizer(model_dir, vocab)
@@ -76,7 +73,6 @@ def make_embedder_dir(model_dir: Path, texts: list[str]) -> Path:
 	onnx.save(model, str(model_dir / 'model.onnx'))
 	return model_dir
 
-
 def make_reranker_dir(
 	model_dir: Path,
 	texts: list[str],
@@ -84,7 +80,7 @@ def make_reranker_dir(
 	*,
 	default_min_score: float = 0.5,
 ) -> Path:
-	"""按字符权重求和的假交叉编码器：包含正权重字符的段落得分高。"""
+	"""Fake reranker summing per-character weights. 按字符权重求和的假重排模型。"""
 	model_dir.mkdir(parents=True, exist_ok=True)
 	vocab = _vocab(texts)
 	_write_tokenizer(model_dir, vocab)
@@ -126,9 +122,8 @@ def make_reranker_dir(
 	)
 	return model_dir
 
-
 def yaml_config(**overrides) -> str:
-	"""生成最小 ``wensuo.yaml``；默认关闭向量，避免测试依赖真实模型。"""
+	"""Minimal wensuo.yaml fixture. 最小配置生成器。"""
 	base = {'dense': {'enabled': False}}
 	base.update(overrides)
 	lines: list[str] = []
@@ -136,12 +131,41 @@ def yaml_config(**overrides) -> str:
 		lines.append(f'{key}: {json.dumps(value, ensure_ascii=False)}')
 	return '\n'.join(lines) + '\n'
 
-
 def run_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-	import os
-	import subprocess
-	import sys
-
 	command = [sys.executable, '-m', 'axc_wensuo.cli', '--root', str(root), *args]
 	env = os.environ.copy()
 	return subprocess.run(command, capture_output=True, text=True, env=env, timeout=120)
+
+FILTER_KEYS = {'scope', 'path_prefix', 'tags', 'file_types', 'modified_after'}
+
+def _make_options(cls, kwargs):
+	from axc_wensuo.filters import Filters
+
+	filter_values = {key: kwargs.pop(key) for key in list(kwargs) if key in FILTER_KEYS}
+	return cls(filters=Filters(**filter_values), **kwargs)
+
+def search_options(**kwargs):
+	from axc_wensuo.kb import SearchOptions
+
+	return _make_options(SearchOptions, kwargs)
+
+def read_options(**kwargs):
+	from axc_wensuo.kb import ReadOptions
+
+	return ReadOptions(**kwargs)
+
+def list_docs_options(**kwargs):
+	from axc_wensuo.kb import ListDocsOptions
+
+	return _make_options(ListDocsOptions, kwargs)
+
+def search(kb, query, **kwargs):
+	top_k = kwargs.pop('top_k', 5)
+	return kb.search(query, top_k=top_k, options=search_options(**kwargs))
+
+def read(kb, doc_id, **kwargs):
+	section = kwargs.pop('section', None)
+	return kb.read(doc_id, section=section, options=read_options(**kwargs))
+
+def list_docs(kb, **kwargs):
+	return kb.list_docs(options=list_docs_options(**kwargs))

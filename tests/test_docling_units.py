@@ -1,8 +1,4 @@
-"""Docling 适配层的单元测试：不依赖 Docling 与真实文件，验证位置映射。
-
-真实 PDF 转换需要 Docling 模型资产；这里用假的文档对象覆盖 page / slide / sheet / section
-与表格行的映射，保证适配层逻辑可回归。
-"""
+"""Docling adapter unit tests. Docling 适配层单元测试。"""
 
 from __future__ import annotations
 
@@ -15,27 +11,21 @@ from axc_wensuo.parsers.docling import _build
 def _label(value: str):
 	return SimpleNamespace(value=value)
 
-
 def _prov(*pages: int):
 	return [SimpleNamespace(page_no=page) for page in pages]
-
 
 def _text(value: str, label: str = 'text', pages=(1,)):
 	return SimpleNamespace(text=value, label=_label(label), prov=_prov(*pages))
 
-
 def _heading(value: str, pages=(1,)):
 	return _text(value, 'section_header', pages)
-
 
 def _cell(value: str):
 	return SimpleNamespace(text=value)
 
-
 def _table(rows: list[list[str]], pages=(2,)):
 	grid = [[_cell(value) for value in row] for row in rows]
 	return SimpleNamespace(label=_label('table'), prov=_prov(*pages), data=SimpleNamespace(grid=grid))
-
 
 class _FakeDocument:
 	def __init__(self, items):
@@ -43,7 +33,6 @@ class _FakeDocument:
 
 	def iterate_items(self, with_groups: bool = False):
 		return iter(self._items)
-
 
 def test_pdf_page_locations():
 	document = _FakeDocument(
@@ -60,7 +49,6 @@ def test_pdf_page_locations():
 	assert parsed.blocks[2].location.start == 2
 	chunks = chunk_document(parsed, scope='_root', doc_title=parsed.doc_title)
 	assert any(chunk.location.kind == 'page' for chunk in chunks)
-
 
 def test_xlsx_sheet_and_rows():
 	sheet_group = SimpleNamespace(label=_label('sheet'), name='成本')
@@ -81,7 +69,6 @@ def test_xlsx_sheet_and_rows():
 	assert chunk.location.sheet == '成本'
 	assert chunk.location.row_start == 2
 	assert chunk.location.row_end == 3
-
 
 def test_pptx_slide_and_docx_section():
 	pptx = _FakeDocument(

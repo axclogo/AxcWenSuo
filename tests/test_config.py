@@ -13,7 +13,6 @@ def _root(tmp_path: Path) -> Path:
 	root.mkdir()
 	return root
 
-
 def test_defaults(tmp_path):
 	root = _root(tmp_path)
 	config = load_config(root)
@@ -34,20 +33,17 @@ def test_defaults(tmp_path):
 	assert config.rerank.model_dir is None
 	assert config.rerank.top_k == 30
 
-
 def test_unknown_top_level_field(tmp_path):
 	root = _root(tmp_path)
 	(root / 'wensuo.yaml').write_text('nope: 1\n', encoding='utf-8')
 	with pytest.raises(ConfigError, match='未知字段'):
 		load_config(root)
 
-
 def test_unknown_nested_field(tmp_path):
 	root = _root(tmp_path)
 	(root / 'wensuo.yaml').write_text('chunk:\n  max_chars: 1000\n  bogus: 1\n', encoding='utf-8')
 	with pytest.raises(ConfigError, match='bogus'):
 		load_config(root)
-
 
 @pytest.mark.parametrize(
 	'body',
@@ -80,14 +76,12 @@ def test_invalid_values(tmp_path, body):
 	with pytest.raises(ConfigError):
 		load_config(root)
 
-
 def test_index_dir_relative_to_root(tmp_path):
 	root = _root(tmp_path)
 	(root / 'wensuo.yaml').write_text('index_dir: idx\nmodels_dir: models\n', encoding='utf-8')
 	config = load_config(root)
 	assert config.index_dir == (root / 'idx').resolve()
 	assert config.models_dir == (root / 'models').resolve()
-
 
 def test_scope_rules_and_descriptions(tmp_path):
 	root = _root(tmp_path)
@@ -99,13 +93,11 @@ def test_scope_rules_and_descriptions(tmp_path):
 	assert config.scope_rules[0].glob == '**/*报销*'
 	assert config.scope_rules[0].scope == '财务'
 
-
 def test_invalid_yaml(tmp_path):
 	root = _root(tmp_path)
 	(root / 'wensuo.yaml').write_text('foo: [\n', encoding='utf-8')
 	with pytest.raises(ConfigError, match='YAML'):
 		load_config(root)
-
 
 def test_global_config_and_named_kb(tmp_path, monkeypatch):
 	notes = tmp_path / 'notes'
@@ -119,23 +111,19 @@ def test_global_config_and_named_kb(tmp_path, monkeypatch):
 	assert resolve_root(None, 'notes') == notes.resolve()
 	assert resolve_root(None, None) == notes.resolve()
 
-
 def test_missing_named_kb(tmp_path):
 	with pytest.raises(ConfigError, match='没有名为'):
 		resolve_root(None, 'missing')
-
 
 def test_root_and_kb_conflict(tmp_path):
 	root = _root(tmp_path)
 	with pytest.raises(ConfigError, match='不能同时指定'):
 		resolve_root(str(root), 'notes')
 
-
 def test_default_root_is_cwd(tmp_path, monkeypatch):
 	root = _root(tmp_path)
 	monkeypatch.chdir(root)
 	assert resolve_root(None, None) == root.resolve()
-
 
 def test_config_files_recorded(tmp_path, monkeypatch):
 	root = _root(tmp_path)
@@ -143,7 +131,6 @@ def test_config_files_recorded(tmp_path, monkeypatch):
 	config = load_config(root)
 	assert config.kb_config_file == (root / 'wensuo.yaml')
 	assert (root / 'wensuo.yaml') in config.config_files
-
 
 def test_bool_is_not_int(tmp_path):
 	root = _root(tmp_path)

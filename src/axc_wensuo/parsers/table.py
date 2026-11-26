@@ -1,4 +1,4 @@
-"""CSV / TSV 解析（FR-303）：整个文件是一张表，第一行是表头。"""
+"""CSV/TSV parser. CSV/TSV 解析器。"""
 
 from __future__ import annotations
 

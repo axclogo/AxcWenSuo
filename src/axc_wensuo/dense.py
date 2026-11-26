@@ -1,17 +1,7 @@
-"""ONNX 向量模型与向量召回（FR-511 ~ FR-517）。
-
-* 文档侧编码 ``index_text``：内容 token ≤ 510 时整段编码，否则按 448 token 窗口、384 步长切窗，
-  各窗向量平均后再 L2 归一化。
-* 查询侧加 BGE 指令前缀，截断到 510 token。
-* 向量以 float16 存进 SQLite，计算时转 float32；相似度为点积，暴力全量计算。
-
-模型文件（``model.onnx``、``tokenizer.json``）由用户提供或通过 ``ws models download`` 下载，
-运行时绝不联网（FR-513）。
-"""
+"""ONNX embedder and dense recall. ONNX 向量模型与向量召回。"""
 
 from __future__ import annotations
 
-import hashlib
 import os
 import urllib.error
 import urllib.request
@@ -25,6 +15,7 @@ from axc_wensuo import embedder_meta
 from axc_wensuo.config import DenseConfig
 from axc_wensuo.errors import WenSuoRuntimeError
 from axc_wensuo.filters import Filters
+from axc_wensuo.hashing import file_sha256
 from axc_wensuo.store import Store
 
 QUERY_PREFIX = '为这个句子生成表示以用于检索相关文章：'
@@ -38,11 +29,9 @@ BATCH_SIZE = 16
 def model_dir_for(config: DenseConfig, models_dir: Path) -> Path:
 	return Path(models_dir) / config.model
 
-
 def model_ready(model_dir: str | Path) -> bool:
 	directory = Path(model_dir)
 	return all((directory / name).is_file() for name in MODEL_FILENAMES)
-
 
 def require_model(model_dir: str | Path) -> Path:
 	directory = Path(model_dir)
@@ -54,22 +43,13 @@ def require_model(model_dir: str | Path) -> Path:
 		)
 	return directory
 
-
 def model_identity(model_dir: str | Path) -> str:
-	"""模型身份 = 模型名 + ``model.onnx`` / ``tokenizer.json`` 的 SHA-256（FR-204、FR-512）。"""
+	"""Identity from model name and file hashes. 模型身份由名称与文件哈希组成。"""
 	directory = Path(model_dir)
-	parts = [embedder_meta.MODEL_NAME]
-	for name in MODEL_FILENAMES:
-		digest = hashlib.sha256()
-		with (directory / name).open('rb') as handle:
-			for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-				digest.update(chunk)
-		parts.append(digest.hexdigest())
-	return ':'.join(parts)
-
+	return ':'.join([embedder_meta.MODEL_NAME, *(file_sha256(directory / name) for name in MODEL_FILENAMES)])
 
 class Embedder:
-	"""BGE ONNX 编码器。一个实例只加载一次模型（FR-1022）。"""
+	"""BGE ONNX encoder loaded once. BGE ONNX 编码器，只加载一次。"""
 
 	def __init__(self, model_dir: str | Path, *, threads: int | None = None) -> None:
 		directory = require_model(model_dir)
@@ -163,23 +143,19 @@ class Embedder:
 		vectors = self._run_ids([self._encode_window(content)])
 		return _l2_normalize(vectors)[0]
 
-
 def _l2_normalize(vectors: np.ndarray) -> np.ndarray:
 	norm = np.linalg.norm(vectors, axis=1, keepdims=True)
 	norm[norm == 0] = 1.0
 	return vectors / norm
 
-
 def vector_to_blob(vector: np.ndarray) -> bytes:
 	return np.asarray(vector, dtype=np.float16).tobytes()
-
 
 @dataclass(frozen=True)
 class DenseHit:
 	chunk_pk: int
 	chunk_id: str
 	score: float
-
 
 class DenseIndex:
 	def __init__(self, store: Store) -> None:
@@ -216,11 +192,8 @@ class DenseIndex:
 		)
 		return [DenseHit(chunk_pk=pk, chunk_id=chunk_id, score=score) for score, chunk_id, pk in order[:limit]]
 
-
 def download_model(models_dir: Path, *, force: bool = False) -> list[Path]:
-	"""下载默认向量模型并校验 SHA-256（FR-512、FR-513）。只在显式执行该命令时联网。"""
-	from axc_wensuo.errors import WenSuoRuntimeError
-
+	"""Download and verify the default model. 下载并校验默认模型。"""
 	if not embedder_meta.release_published():
 		raise WenSuoRuntimeError(
 			f'默认向量模型发布包（{embedder_meta.RELEASE_TAG}）尚未发布；'
@@ -230,9 +203,8 @@ def download_model(models_dir: Path, *, force: bool = False) -> list[Path]:
 	target.mkdir(parents=True, exist_ok=True)
 	written: list[Path] = []
 	for name, expected in embedder_meta.MODEL_FILES.items():
-		assert expected is not None
 		destination = target / name
-		if destination.is_file() and not force and _sha256_file(destination) == expected:
+		if destination.is_file() and not force and file_sha256(destination) == expected:
 			written.append(destination)
 			continue
 		temporary = destination.with_suffix(destination.suffix + '.part')
@@ -247,23 +219,13 @@ def download_model(models_dir: Path, *, force: bool = False) -> list[Path]:
 		except (urllib.error.URLError, OSError) as exc:
 			temporary.unlink(missing_ok=True)
 			raise WenSuoRuntimeError(f'下载 {name} 失败：{exc}') from exc
-		actual = _sha256_file(temporary)
+		actual = file_sha256(temporary)
 		if actual != expected:
 			temporary.unlink(missing_ok=True)
 			raise WenSuoRuntimeError(f'{name} 的 SHA-256 校验失败：期望 {expected}，实际 {actual}')
 		os.replace(temporary, destination)
 		written.append(destination)
 	return written
-
-
-def _sha256_file(path: Path) -> str:
-	digest = hashlib.sha256()
-	with path.open('rb') as handle:
-		for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-			digest.update(chunk)
-	return digest.hexdigest()
-
-
 __all__: list[Any] = [
 	'DenseHit',
 	'DenseIndex',

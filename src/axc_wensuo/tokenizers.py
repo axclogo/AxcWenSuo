@@ -1,10 +1,4 @@
-"""分词（FR-501、FR-502）与标识符提取（第 4 节）。
-
-默认分词器 ``cjk_bigram``：汉字输出单字 + 相邻两字；连续的 ``[a-z0-9_.\\-]`` 串输出整串，
-含分隔符时再按 ``_ . -`` 拆开输出各部分。不丢弃停用词。
-
-查询与文档使用同一分词器（FR-504）。
-"""
+"""Chinese tokenizers and identifier rules. 中文分词与标识符规则。"""
 
 from __future__ import annotations
 
@@ -26,14 +20,12 @@ ASCII_WORD_CHARS = frozenset('abcdefghijklmnopqrstuvwxyz0123456789_')
 
 
 def normalize(text: str) -> str:
-	"""NFKC 归一 + 转小写（索引与查询共用）。"""
+	"""NFKC normalize and lowercase. NFKC 归一并转小写。"""
 	return unicodedata.normalize('NFKC', text).lower()
-
 
 def _is_cjk(char: str) -> bool:
 	code = ord(char)
 	return any(low <= code <= high for low, high in CJK_RANGES)
-
 
 def _word_tokens(run: str) -> list[str]:
 	run = run.strip('.-')
@@ -43,7 +35,6 @@ def _word_tokens(run: str) -> list[str]:
 	if '_' in run or '.' in run or '-' in run:
 		tokens.extend(part for part in SPLIT_RE.split(run) if part)
 	return tokens
-
 
 def tokenize_cjk_bigram(text: str) -> list[str]:
 	tokens: list[str] = []
@@ -69,14 +60,12 @@ def tokenize_cjk_bigram(text: str) -> list[str]:
 		index += 1
 	return tokens
 
-
 def _jieba_module():
 	if importlib.util.find_spec('jieba') is None:
 		raise WenSuoRuntimeError('分词器 jieba 未安装；请安装 jieba，或在 wensuo.yaml 中改用 tokenizer: cjk_bigram')
 	import jieba
 
 	return jieba
-
 
 def tokenize_jieba(text: str) -> list[str]:
 	jieba = _jieba_module()
@@ -98,7 +87,6 @@ def tokenize_jieba(text: str) -> list[str]:
 	cut_segment(normalized[position:])
 	return tokens
 
-
 def tokenizer_signature(name: str) -> str:
 	if name == 'cjk_bigram':
 		return f'cjk_bigram:{CJK_BIGRAM_VERSION}'
@@ -106,7 +94,6 @@ def tokenizer_signature(name: str) -> str:
 		jieba = _jieba_module()
 		return f'jieba:{getattr(jieba, "__version__", "unknown")}'
 	raise ConfigError(f'未知分词器：{name!r}；可选：{", ".join(TOKENIZER_NAMES)}')
-
 
 @dataclass(frozen=True)
 class Tokenizer:
@@ -130,16 +117,11 @@ class Tokenizer:
 	def signature(self) -> str:
 		return tokenizer_signature(self.name)
 
-
 def get_tokenizer(name: str) -> Tokenizer:
 	return Tokenizer(name=name)
 
-
-# ---------------------------------------------------------------- 标识符
-
-
 def extract_identifiers(query: str) -> list[str]:
-	"""按第 4 节提取查询中的标识符，去重并保持首次出现顺序。"""
+	"""Extract query identifiers. 提取查询标识符。"""
 	normalized = normalize(query)
 	identifiers: list[str] = []
 	seen: set[str] = set()
@@ -155,9 +137,8 @@ def extract_identifiers(query: str) -> list[str]:
 			identifiers.append(value)
 	return identifiers
 
-
 def identifier_hit(normalized_text: str, identifier: str) -> bool:
-	"""标识符命中规则（第 4 节）：子串出现且前后字符都不是 ``[a-z0-9_]`` 或位于边界。"""
+	"""Identifier boundary rule. 标识符边界命中规则。"""
 	start = 0
 	length = len(identifier)
 	while True:
@@ -171,14 +152,12 @@ def identifier_hit(normalized_text: str, identifier: str) -> bool:
 			return True
 		start = position + 1
 
-
 def identifier_in_runs(runs: list[str], identifier: str) -> bool:
-	"""在一组已归一的标识符串中判断是否命中。"""
+	"""Match an identifier in runs. 在标识符串中匹配。"""
 	return any(identifier_hit(run, identifier) for run in runs)
 
-
 def extract_ident_runs(text: str) -> list[str]:
-	"""提取文本中所有 ``[a-z0-9_.\\-]`` 连续串（去首尾 ``.`` / ``-``），用于快速判断“知识库里有没有”。"""
+	"""Extract identifier runs. 提取标识符串。"""
 	normalized = normalize(text)
 	runs: list[str] = []
 	seen: set[str] = set()

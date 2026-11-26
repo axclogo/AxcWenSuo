@@ -1,8 +1,4 @@
-"""切段（FR-401 ~ FR-409）。
-
-单位是「一个标题行到下一个任意级别标题行之前」；超长单位按段落贪心装箱，表格单独成段并在每段
-重复表头。短段按父章节路径合并。最终为每段计算 ``chunk_id``、``index_text``、``ordinal``。
-"""
+"""Chunking rules FR-401..FR-409. 切段规则（FR-401~FR-409）。"""
 
 from __future__ import annotations
 
@@ -27,7 +23,6 @@ class ChunkDraft:
 	chunk_id: str = ''
 	index_text: str = ''
 
-
 @dataclass
 class _Atom:
 	text: str
@@ -35,12 +30,10 @@ class _Atom:
 	start: int
 	end: int
 
-
 @dataclass
 class _Unit:
 	blocks: list[Block] = field(default_factory=list)
 	title_path: list[str] = field(default_factory=list)
-
 
 def chunk_document(
 	doc: ParsedDocument,
@@ -58,7 +51,6 @@ def chunk_document(
 	_finalize(drafts, doc.doc_id, doc_title)
 	return drafts
 
-
 def _line_starts(text: str) -> list[int]:
 	starts = [0]
 	for index, char in enumerate(text):
@@ -66,12 +58,10 @@ def _line_starts(text: str) -> list[int]:
 			starts.append(index + 1)
 	return starts
 
-
 def _line_number(line_starts: list[int], offset: int) -> int:
-	"""1 起始行号。"""
+	"""1-based line number. 1 起始行号。"""
 	position = bisect.bisect_right(line_starts, max(offset, 0))
 	return max(1, position)
-
 
 def _units(blocks: list[Block]) -> list[_Unit]:
 	units: list[_Unit] = []
@@ -89,18 +79,15 @@ def _units(blocks: list[Block]) -> list[_Unit]:
 		units[-1].blocks.append(block)
 	return units
 
-
 def _unit_text(doc: ParsedDocument, blocks: list[Block]) -> str:
-	"""优先取原文切片，保留段落间真实的空行（需求要求 text 为原文）。"""
+	"""Prefer the original source slice. 优先取原文切片。"""
 	return doc.text[blocks[0].start : blocks[-1].end]
-
 
 def _union_location(blocks: list[Block]) -> Location:
 	location = blocks[0].location_or_lines()
 	for block in blocks[1:]:
 		location = location.union(block.location_or_lines())
 	return location
-
 
 def _chunk_unit(doc: ParsedDocument, unit: _Unit, line_starts: list[int], max_chars: int) -> list[ChunkDraft]:
 	blocks = unit.blocks
@@ -124,7 +111,6 @@ def _chunk_unit(doc: ParsedDocument, unit: _Unit, line_starts: list[int], max_ch
 	if segment:
 		drafts.extend(_pack_blocks(doc, segment, unit.title_path, line_starts, max_chars))
 	return drafts
-
 
 def _pack_blocks(
 	doc: ParsedDocument,
@@ -156,14 +142,12 @@ def _pack_blocks(
 		drafts.append(_draft_from_atoms(doc, current, title_path))
 	return drafts
 
-
 def _draft_from_atoms(doc: ParsedDocument, atoms: list[_Atom], title_path: list[str]) -> ChunkDraft:
 	text = doc.text[atoms[0].start : atoms[-1].end]
 	location = atoms[0].location
 	for atom in atoms[1:]:
 		location = location.union(atom.location)
 	return ChunkDraft(text=text, title_path=list(title_path), location=location)
-
 
 def _atoms(doc: ParsedDocument, blocks: list[Block], line_starts: list[int], max_chars: int) -> list[_Atom]:
 	atoms: list[_Atom] = []
@@ -197,12 +181,10 @@ def _atoms(doc: ParsedDocument, blocks: list[Block], line_starts: list[int], max
 			)
 	return atoms
 
-
 def _split_spans(text: str, max_chars: int, *, code: bool = False) -> list[tuple[int, int]]:
 	if code:
 		return _pack_line_spans(text, max_chars)
 	return _pack_sentence_spans(text, max_chars)
-
 
 def _pack_sentence_spans(text: str, max_chars: int) -> list[tuple[int, int]]:
 	spans: list[tuple[int, int]] = []
@@ -236,7 +218,6 @@ def _pack_sentence_spans(text: str, max_chars: int) -> list[tuple[int, int]]:
 		result.append((current_start, current_end))
 	return result
 
-
 def _pack_line_spans(text: str, max_chars: int) -> list[tuple[int, int]]:
 	lines: list[tuple[int, int]] = []
 	offset = 0
@@ -267,7 +248,6 @@ def _pack_line_spans(text: str, max_chars: int) -> list[tuple[int, int]]:
 		result.append((current_start, current_end))
 	return result
 
-
 def _piece_location(doc: ParsedDocument, block: Block, start: int, end: int, line_starts: list[int]) -> Location:
 	if block.location is not None and block.line_start is None:
 		return block.location
@@ -276,7 +256,6 @@ def _piece_location(doc: ParsedDocument, block: Block, start: int, end: int, lin
 	start_line = _line_number(line_starts, block.start + start)
 	end_line = _line_number(line_starts, block.start + max(start, end - 1))
 	return Location(kind='lines', start=start_line, end=end_line)
-
 
 def _table_chunks(block: Block, title_path: list[str], max_chars: int) -> list[ChunkDraft]:
 	table = block.table
@@ -312,7 +291,6 @@ def _table_chunks(block: Block, title_path: list[str], max_chars: int) -> list[C
 		start = end if end > start else start + 1
 	return drafts
 
-
 def _table_location(block: Block, table, header_rows: int, start: int, end: int) -> Location:
 	location = block.location_or_lines()
 	if location.kind == 'sheet':
@@ -334,7 +312,6 @@ def _table_location(block: Block, table, header_rows: int, start: int, end: int)
 			if first is not None and last is not None:
 				return Location(kind='lines', start=min(first, last), end=max(first, last))
 	return location
-
 
 def _merge_short(drafts: list[ChunkDraft], min_chars: int, max_chars: int) -> list[ChunkDraft]:
 	items: list[ChunkDraft | None] = list(drafts)
@@ -372,10 +349,8 @@ def _merge_short(drafts: list[ChunkDraft], min_chars: int, max_chars: int) -> li
 		index += 1
 	return [item for item in items if item is not None]
 
-
 def _same_parent(left: ChunkDraft, right: ChunkDraft) -> bool:
 	return left.title_path[:-1] == right.title_path[:-1]
-
 
 def _finalize(drafts: list[ChunkDraft], doc_id: str, doc_title: str) -> None:
 	seen: dict[tuple[tuple[str, ...], str], int] = {}

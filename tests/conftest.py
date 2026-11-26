@@ -20,7 +20,6 @@ def isolated_home(tmp_path_factory, monkeypatch):
 	monkeypatch.delenv('APPDATA', raising=False)
 	yield home
 
-
 @pytest.fixture
 def kb_factory(tmp_path):
 	created: list[KnowledgeBase] = []
@@ -49,7 +48,6 @@ def kb_factory(tmp_path):
 	for kb in created:
 		kb.close()
 
-
 @pytest.fixture
 def corpus_copy(tmp_path) -> Path:
 	import shutil
@@ -57,7 +55,6 @@ def corpus_copy(tmp_path) -> Path:
 	target = tmp_path / 'corpus'
 	shutil.copytree(FIXTURES, target, ignore=shutil.ignore_patterns('.wensuo', '__pycache__'))
 	return target
-
 
 def set_mtime(path: Path, seconds: float) -> None:
 	os.utime(path, (seconds, seconds))

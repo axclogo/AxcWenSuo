@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 
 import pytest
-from helpers import make_embedder_dir, write, yaml_config
+from helpers import make_embedder_dir, search, write, yaml_config
+
+from axc_wensuo.errors import WenSuoRuntimeError
 
 DOCS = {
 	'水果/苹果.md': '# 苹果\n\n苹果是一种水果，红色或绿色。\n',
@@ -20,28 +22,27 @@ def _kb_with_model(kb_factory, tmp_path):
 	kb = kb_factory(DOCS, config=config)
 	return kb
 
-
 def test_dense_recall_ranks_semantically_close_document(kb_factory, tmp_path):
 	kb = _kb_with_model(kb_factory, tmp_path)
 	kb.sync()
 	assert kb.store.count_missing_vectors() == 0
+	from axc_wensuo.search import SearchRequest
+
 	engine = kb._engine('dense')
-	result = engine.search('苹果', top_k=3, mode='dense')
+	result = engine.search(SearchRequest('苹果', top_k=3, mode='dense'))
 	assert result.results
 	assert result.results[0].doc_id == '水果/苹果.md'
 	assert 'dense' in result.results[0].sources
 	assert 'lexical' not in result.results[0].sources
 
-
 def test_fused_uses_both_routes(kb_factory, tmp_path):
 	kb = _kb_with_model(kb_factory, tmp_path)
 	kb.sync()
-	hits = kb.search('苹果', sync=False).results
+	hits = search(kb, '苹果', sync=False).results
 	sources = [hit.sources for hit in hits]
 	assert any('dense' in item for item in sources)
 	assert any('lexical' in item for item in sources)
 	assert hits[0].doc_id == '水果/苹果.md'
-
 
 def test_dense_signature_and_reembedding_after_model_change(kb_factory, tmp_path):
 	kb = _kb_with_model(kb_factory, tmp_path)
@@ -56,7 +57,6 @@ def test_dense_signature_and_reembedding_after_model_change(kb_factory, tmp_path
 	assert kb.store.dense_signature() != first_signature
 	assert kb.store.count_missing_vectors() == 0
 
-
 def test_long_document_is_windowed(kb_factory, tmp_path):
 	long_text = '苹果' * 600
 	model_dir = tmp_path / 'models' / 'bge-small-zh-v1.5'
@@ -65,24 +65,21 @@ def test_long_document_is_windowed(kb_factory, tmp_path):
 	kb = kb_factory({'长.md': '# 长\n\n' + long_text + '\n'}, config=config)
 	kb.sync()
 	assert kb.store.count_missing_vectors() == 0
-	hits = kb.search('苹果', sync=False).results
+	hits = search(kb, '苹果', sync=False).results
 	assert hits
-
 
 def test_dense_model_missing_is_runtime_error(kb_factory):
 	config = yaml_config(dense={'enabled': True}, models_dir='missing-models')
 	kb = kb_factory({'甲.md': '# 甲\n\n内容。\n'}, config=config)
-	with pytest.raises(Exception) as excinfo:
+	with pytest.raises(WenSuoRuntimeError) as excinfo:
 		kb.sync()
 	assert '向量模型未就绪' in str(excinfo.value)
 
-
 def test_dense_disabled_has_no_dense_source(kb_factory):
 	kb = kb_factory({'甲.md': '# 甲\n\n鲸鱼内容。\n'})
-	result = kb.search('鲸鱼')
+	result = search(kb, '鲸鱼')
 	assert 'dense' not in result.results[0].sources
 	assert result.score_kind == 'rank_only'
-
 
 def test_eval_dense_mode(kb_factory, tmp_path):
 	kb = _kb_with_model(kb_factory, tmp_path)
@@ -101,7 +98,6 @@ def test_eval_dense_mode(kb_factory, tmp_path):
 	assert result.modes['dense'].hit_at_k == 1.0
 	assert result.modes['fused'].hit_at_k == 1.0
 	assert result.modes['dense'].false_return_rate is not None
-
 
 def test_unchanged_chunk_vectors_are_reused(kb_factory, tmp_path, monkeypatch):
 	kb = _kb_with_model(kb_factory, tmp_path)
@@ -126,7 +122,6 @@ def test_unchanged_chunk_vectors_are_reused(kb_factory, tmp_path, monkeypatch):
 	assert not set(embedded) & old_texts
 	assert any('补充' in text for text in embedded)
 
-
 def test_doctor_reports_model_readiness(kb_factory, tmp_path):
 	from helpers import make_reranker_dir
 
@@ -148,7 +143,6 @@ def test_doctor_reports_model_readiness(kb_factory, tmp_path):
 	assert doctor.dense['identity']
 	assert doctor.rerank['identity']
 
-
 def test_vector_cache_reused_across_documents(kb_factory, tmp_path, monkeypatch):
 	kb = _kb_with_model(kb_factory, tmp_path)
 	kb.sync()
@@ -165,5 +159,5 @@ def test_vector_cache_reused_across_documents(kb_factory, tmp_path, monkeypatch)
 	monkeypatch.setattr(Embedder, 'encode_documents', spy)
 	kb.sync()
 	assert recorded == []
-	hits = kb.search('苹果', sync=False).results
+	hits = search(kb, '苹果', sync=False).results
 	assert any(hit.doc_id == '副本/苹果副本.md' for hit in hits)

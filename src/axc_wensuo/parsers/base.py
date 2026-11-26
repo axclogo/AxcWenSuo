@@ -1,4 +1,4 @@
-"""解析器的公共数据结构与工具。"""
+"""Shared parser structures and helpers. 解析器公共结构与工具。"""
 
 from __future__ import annotations
 
@@ -11,12 +11,11 @@ from axc_wensuo.models import Location
 
 
 class ParseError(Exception):
-	"""单个文件解析失败；同步层捕获后记入失败清单（FR-206）。"""
-
+	"""One file failed to parse. 单个文件解析失败。"""
 
 @dataclass
 class Table:
-	"""一张表。``rows`` 第一行是表头（``header_rows`` 行）。"""
+	"""One table; first row is header. 一张表，第一行为表头。"""
 
 	rows: list[list[str]]
 	header_rows: int = 1
@@ -24,12 +23,11 @@ class Table:
 	sheet: str | None = None
 	row_start: int | None = None
 
-
 @dataclass
 class Block:
-	"""解析出的一个结构块，带原文偏移。"""
+	"""Structural block with source offsets. 带原文偏移的结构块。"""
 
-	kind: str  # heading / paragraph / list / code / table
+	kind: str  # Block kind. 块类型。
 	start: int
 	end: int
 	text: str
@@ -46,7 +44,6 @@ class Block:
 		if self.line_start is not None and self.line_end is not None:
 			return Location(kind='lines', start=self.line_start, end=self.line_end)
 		return Location(kind='section')
-
 
 @dataclass
 class ParsedDocument:
@@ -65,14 +62,12 @@ class ParsedDocument:
 	def empty(self) -> bool:
 		return not any(block.text.strip() for block in self.blocks)
 
-
 def clean_heading(text: str) -> str:
-	"""去掉 Markdown 标题记号与首尾空白。"""
+	"""Strip Markdown heading markers. 去掉 Markdown 标题记号。"""
 	return text.strip().lstrip('#').strip().rstrip('#').strip()
 
-
 def document_title(meta_title: Any, blocks: list[Block], doc_id: str) -> str:
-	"""FR-132：文件头 title > 第一个一级标题 > 文件名（去扩展名）。"""
+	"""Title precedence from FR-132. 标题优先级（FR-132）。"""
 	if isinstance(meta_title, str) and meta_title.strip():
 		return meta_title.strip()
 	for block in blocks:
@@ -82,7 +77,6 @@ def document_title(meta_title: Any, blocks: list[Block], doc_id: str) -> str:
 				return title
 	return Path(doc_id).stem
 
-
 def normalize_meta_list(value: Any) -> list[str]:
 	if isinstance(value, str):
 		return [value] if value.strip() else []
@@ -90,28 +84,11 @@ def normalize_meta_list(value: Any) -> list[str]:
 		return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 	return []
 
-
-def heading_chains(blocks: list[Block]) -> list[tuple[Block, list[str]]]:
-	"""按文档顺序返回每个标题块的完整标题链。"""
-	result: list[tuple[Block, list[str]]] = []
-	stack: list[tuple[int, str]] = []
-	for block in blocks:
-		if block.kind != 'heading':
-			continue
-		level = block.level or 1
-		while stack and stack[-1][0] >= level:
-			stack.pop()
-		stack.append((level, clean_heading(block.label or block.text)))
-		result.append((block, [title for _, title in stack]))
-	return result
-
-
 def _normalize_title(value: str) -> str:
 	return unicodedata.normalize('NFC', value).strip()
 
-
 def find_section(doc: ParsedDocument, section: list[str]) -> tuple[int, int] | None:
-	"""FR-307：按标题链前缀精确匹配，返回（起始偏移、结束偏移）。"""
+	"""Find a heading chain prefix. 按标题链前缀查找章节。"""
 	target = [_normalize_title(item) for item in section]
 	if not target:
 		return None
@@ -134,9 +111,8 @@ def find_section(doc: ParsedDocument, section: list[str]) -> tuple[int, int] | N
 		return block.start, end
 	return None
 
-
 def render_table(rows: list[list[str]], header_rows: int = 1) -> str:
-	"""渲染 Markdown 管道表格：单元格内 ``|`` 转义、换行替换为空格（FR-405）。"""
+	"""Render a Markdown pipe table. 渲染 Markdown 管道表格。"""
 	if not rows:
 		return ''
 	header_rows = max(1, min(header_rows, len(rows)))
@@ -148,7 +124,6 @@ def render_table(rows: list[list[str]], header_rows: int = 1) -> str:
 		if index == header_rows - 1:
 			lines.append('| ' + ' | '.join('---' for _ in range(width)) + ' |')
 	return '\n'.join(lines)
-
 
 def _escape_cell(value: str) -> str:
 	return str(value).replace('|', '\\|').replace('\r\n', ' ').replace('\n', ' ').replace('\r', ' ').strip()

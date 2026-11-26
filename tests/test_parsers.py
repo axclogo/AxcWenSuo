@@ -58,25 +58,21 @@ def test_markdown_front_matter_and_blocks():
 	assert table.table.row_lines == [21, 23]
 	assert [block.kind for block in doc.blocks if block.kind == 'list'] == ['list', 'list']
 
-
 def test_markdown_title_fallbacks():
 	doc = parse_markdown('纪要.md', '# 会议纪要\n\n内容\n')
 	assert doc.doc_title == '会议纪要'
 	doc = parse_markdown('无标题文件.txt', '正文\n')
 	assert doc.doc_title == '无标题文件'
 
-
 def test_markdown_leading_heading_less_content():
 	doc = parse_markdown('a.md', '前言段落\n\n# 标题\n\n正文\n')
 	assert doc.blocks[0].kind == 'paragraph'
 	assert doc.blocks[0].text == '前言段落'
 
-
 def test_broken_front_matter_is_body():
 	doc = parse_markdown('a.md', '---\ntitle: [\n---\n\n正文\n')
 	assert doc.warnings
 	assert doc.blocks[0].text.startswith('---')
-
 
 def test_find_section():
 	doc = parse_markdown('a.md', MARKDOWN)
@@ -91,12 +87,10 @@ def test_find_section():
 	assert find_section(doc, ['二级标题']) is None
 	assert find_section(doc, []) is None
 
-
 def test_render_table_escapes():
 	text = render_table([['a|b', 'x\ny'], ['c', 'd']])
 	assert '| a\\|b | x y |' in text
 	assert '| --- | --- |' in text
-
 
 def test_text_paragraphs():
 	doc = parse_text('a.txt', '第一段\n继续\n\n第二段\n')
@@ -104,18 +98,15 @@ def test_text_paragraphs():
 	assert doc.blocks[0].line_start == 1
 	assert doc.blocks[1].line_start == 4
 
-
 def test_decode_gb18030():
 	raw = '中文笔记'.encode('gb18030')
 	text, encoding = decode_text(raw)
 	assert text == '中文笔记'
 	assert encoding == 'gb18030'
 
-
 def test_decode_invalid():
 	with pytest.raises(ParseError):
 		decode_text(b'\xff\xff')
-
 
 def test_csv_table():
 	doc = parse_table('a.csv', '工号,姓名\nE001,张三\nE002,李四\n')
@@ -126,12 +117,10 @@ def test_csv_table():
 	assert table.row_lines == [1, 2, 3]
 	assert '| E002 | 李四 |' in doc.text
 
-
 def test_empty_csv():
 	doc = parse_table('a.csv', '\n\n')
 	assert doc.blocks == []
 	assert doc.empty
-
 
 def test_parse_file_dispatch_and_missing_docs(tmp_path):
 	md = tmp_path / 'a.md'
@@ -150,12 +139,10 @@ def test_parse_file_dispatch_and_missing_docs(tmp_path):
 		with pytest.raises(WenSuoRuntimeError, match='docs'):
 			parse_file(pdf, 'a.pdf', index_dir=tmp_path / 'idx')
 
-
 def test_unknown_front_matter_fields_ignored():
 	doc = parse_markdown('a.md', '---\ntitle: T\nunknown: 1\n---\n\n正文\n')
 	assert doc.doc_title == 'T'
 	assert 'unknown' not in doc.meta
-
 
 def test_parsed_cache_paths(tmp_path):
 	from axc_wensuo.parsers.docling import parsed_cache_path, remove_parsed_cache

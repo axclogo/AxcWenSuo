@@ -39,7 +39,7 @@
 | 表 | 内容 |
 | --- | --- |
 | `meta` | schema 版本、`chunk_sig`、`dense_sig`、`built_at`、段数、`avgdl` |
-| `docs` | 文档行：标题、专题、标签、别名、大小、mtime、SHA-256、解析器版本、段数 |
+| `docs` | 文档行：doc_id、实际相对路径、标题、专题、标签、别名、大小、mtime、SHA-256、解析器版本、段数 |
 | `chunks` | 段：`chunk_id`、正文、`index_text`、`title_path`、`location`、加权长度 `dl`、float16 向量 |
 | `terms` / `postings` | 倒排表：`(term_id, chunk_pk) → tf_body, tf_meta` |
 | `vector_cache` | 向量缓存：`(index_text 的 SHA-256, 模型身份) → float16 向量`，跨文档复用 |
@@ -87,6 +87,14 @@
 7. 计算 `missing_identifiers`（全库 `ident_run`），结果为空或缺标识符时写缺口清单。
 
 所有排序在分数相同时按 `chunk_id` 升序，保证确定性。
+
+## 失败策略
+
+- 只有 `ParseError` 会在同步中被隔离：记录到 `failures`、继续其它文件（FR-206）。
+- 缺模型、配置错误、数据库写入失败、缓存损坏、Docling 模型资产缺失等一律直接上抛，不降级、不静默重试。
+- 允许的显式策略：索引目录文件锁的超时/重试、解析失败缓存（哈希 + 解析器版本不变才不重试）、
+  向量缓存（文本哈希 + 模型身份）。这些策略都有明确的用户可见语义，不掩盖错误。
+- MCP 工具把 `WenSuoError` 转成 JSON 错误对象（FR-1013）；不是吞错。
 
 ## 线程与并发
 

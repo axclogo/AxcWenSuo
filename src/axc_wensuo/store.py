@@ -1,14 +1,4 @@
-"""SQLite 索引存储（FR-1201）与索引目录文件锁（FR-207）。
-
-索引目录结构::
-
-	<index_dir>/
-	  index.sqlite   # WAL 模式，文档、段、倒排、向量、缺口、失败记录
-	  parsed/        # Docling 解析缓存（由 parsers.docling 写入）
-	  lock           # filelock 文件锁
-
-读写约定：写入方先拿 ``lock``；每个文件（文档）的增删改在一个事务内完成，读者只看到已提交数据。
-"""
+"""SQLite index storage and file lock. SQLite 索引存储与文件锁。"""
 
 from __future__ import annotations
 
@@ -17,6 +7,7 @@ import sqlite3
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +15,10 @@ import filelock
 
 from axc_wensuo.errors import WenSuoRuntimeError
 from axc_wensuo.models import Location
-from axc_wensuo.tokenizers import identifier_hit
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DB_NAME = 'index.sqlite'
 LOCK_NAME = 'lock'
-PARSED_DIR = 'parsed'
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -38,6 +27,7 @@ CREATE TABLE IF NOT EXISTS meta (
 );
 CREATE TABLE IF NOT EXISTS docs (
 	doc_id TEXT PRIMARY KEY,
+	path TEXT NOT NULL,
 	title TEXT NOT NULL,
 	scope TEXT NOT NULL,
 	tags TEXT NOT NULL,
@@ -121,15 +111,35 @@ CREATE TABLE IF NOT EXISTS gaps (
 def _dumps(value: Any) -> str:
 	return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
-
 def _loads(value: str | None, default: Any = None) -> Any:
 	if not value:
 		return default
 	return json.loads(value)
 
+@dataclass(frozen=True)
+class FailureRecord:
+	"""A cached parse failure. 一条解析失败缓存。"""
+
+	doc_id: str
+	reason: str
+	sha256: str
+	parser_version: str
+	size: int
+	mtime_ns: int
+
+@dataclass(frozen=True)
+class GapRecord:
+	"""A gap entry write. 一条缺口记录写入。"""
+
+	query: str
+	filters_json: str
+	entry: str
+	last_result_count: int
+	missing_identifiers: list[str]
+	now: str
 
 class IndexLock:
-	"""索引目录写锁。``acquire`` 返回是否拿到锁，不抛 filelock 异常。"""
+	"""Index directory write lock. 索引目录写锁。"""
 
 	def __init__(self, index_dir: Path) -> None:
 		self.path = Path(index_dir) / LOCK_NAME
@@ -152,9 +162,8 @@ class IndexLock:
 	def __exit__(self, *exc_info: object) -> None:
 		self.release()
 
-
 class Store:
-	"""一个知识库的 SQLite 索引。线程安全不做要求：一个线程一个实例。"""
+	"""One SQLite index per thread. 一个线程一个 SQLite 索引。"""
 
 	def __init__(self, index_dir: Path) -> None:
 		self.index_dir = Path(index_dir)
@@ -186,15 +195,17 @@ class Store:
 		)
 
 	def _schema_version(self) -> int | None:
-		try:
-			row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-		except sqlite3.OperationalError:
+		exists = self.conn.execute(
+			"SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
+		).fetchone()
+		if exists is None:
 			return None
+		row = self.conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
 		return int(row['value']) if row is not None else None
 
 	@staticmethod
 	def _retry_locked(action: Callable[[], Any], *, timeout: float = 30.0) -> None:
-		"""数据库被另一个进程短暂占用时重试（FR-207：写锁由文件锁串行化，这里只处理初始化竞争）。"""
+		"""Retry transient lock contention. 重试短暂锁竞争。"""
 		deadline = time.monotonic() + timeout
 		while True:
 			try:
@@ -218,7 +229,7 @@ class Store:
 
 	@contextmanager
 	def transaction(self) -> Iterator[sqlite3.Connection]:
-		"""一个写事务；异常时回滚。"""
+		"""Write transaction with rollback. 写事务，异常回滚。"""
 		self.conn.execute('BEGIN IMMEDIATE')
 		try:
 			yield self.conn
@@ -228,17 +239,10 @@ class Store:
 		else:
 			self.conn.execute('COMMIT')
 
-	# ---------------------------------------------------------------- meta
 
 	def get_meta(self, key: str, default: str | None = None) -> str | None:
 		row = self.conn.execute('SELECT value FROM meta WHERE key = ?', (key,)).fetchone()
 		return row['value'] if row is not None else default
-
-	def set_meta(self, key: str, value: str) -> None:
-		self.conn.execute(
-			'INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
-			(key, value),
-		)
 
 	def set_meta_many(self, values: dict[str, str]) -> None:
 		self.conn.executemany(
@@ -247,7 +251,7 @@ class Store:
 		)
 
 	def has_index(self) -> bool:
-		"""索引是否已经至少完整建立过一次。"""
+		"""Whether a full build exists. 是否已完整建立索引。"""
 		return self.get_meta('built_at') is not None
 
 	def chunk_signature(self) -> str | None:
@@ -256,7 +260,6 @@ class Store:
 	def dense_signature(self) -> str | None:
 		return self.get_meta('dense_sig')
 
-	# ---------------------------------------------------------------- docs
 
 	def get_doc(self, doc_id: str) -> dict[str, Any] | None:
 		row = self.conn.execute('SELECT * FROM docs WHERE doc_id = ?', (doc_id,)).fetchone()
@@ -273,15 +276,21 @@ class Store:
 		return int(self.conn.execute('SELECT COUNT(*) FROM chunks').fetchone()[0])
 
 	def upsert_doc(self, doc: dict[str, Any]) -> None:
-		"""写入文档行与标签；调用方负责事务。"""
+		"""Write doc row and tags. 写入文档行与标签。"""
 		self.conn.execute(
 			"""
-			INSERT INTO docs(doc_id, title, scope, tags, aliases, size, mtime_ns, sha256, parser, modified_ts, chunks)
-			VALUES (:doc_id, :title, :scope, :tags, :aliases, :size, :mtime_ns, :sha256, :parser, :modified_ts, :chunks)
+			INSERT INTO docs(
+				doc_id, path, title, scope, tags, aliases, size, mtime_ns, sha256, parser, modified_ts, chunks
+			)
+			VALUES (
+				:doc_id, :path, :title, :scope, :tags, :aliases, :size, :mtime_ns, :sha256, :parser,
+				:modified_ts, :chunks
+			)
 			ON CONFLICT(doc_id) DO UPDATE SET
-				title = excluded.title, scope = excluded.scope, tags = excluded.tags, aliases = excluded.aliases,
-				size = excluded.size, mtime_ns = excluded.mtime_ns, sha256 = excluded.sha256,
-				parser = excluded.parser, modified_ts = excluded.modified_ts, chunks = excluded.chunks
+				path = excluded.path, title = excluded.title, scope = excluded.scope, tags = excluded.tags,
+				aliases = excluded.aliases, size = excluded.size, mtime_ns = excluded.mtime_ns,
+				sha256 = excluded.sha256, parser = excluded.parser, modified_ts = excluded.modified_ts,
+				chunks = excluded.chunks
 			""",
 			doc,
 		)
@@ -292,7 +301,7 @@ class Store:
 		)
 
 	def delete_document(self, doc_id: str) -> None:
-		"""删除文档及其段、倒排、向量、标签、失败记录；调用方负责事务。"""
+		"""Delete a document and dependents. 删除文档及依赖数据。"""
 		chunk_pks = [row[0] for row in self.conn.execute('SELECT id FROM chunks WHERE doc_id = ?', (doc_id,))]
 		if chunk_pks:
 			self._delete_chunks(chunk_pks)
@@ -318,10 +327,9 @@ class Store:
 			self.conn.execute(f'DELETE FROM chunks WHERE id IN ({placeholders})', batch)
 		self.conn.execute('DELETE FROM ident_run WHERE n <= 0')
 
-	# ---------------------------------------------------------------- chunks
 
 	def insert_chunk(self, chunk: dict[str, Any]) -> int:
-		"""插入一个段并返回主键；``chunk['location']`` 与 ``title_path`` 为 JSON 可序列化值。"""
+		"""Insert one chunk and return its key. 插入段并返回主键。"""
 		cursor = self.conn.execute(
 			"""
 			INSERT INTO chunks(
@@ -402,7 +410,7 @@ class Store:
 		return dict(sorted(stats.items()))
 
 	def cached_vectors(self, identity: str, text_hashes: Iterable[str]) -> dict[str, bytes]:
-		"""按「段索引文本 SHA-256 + 模型身份」复用向量（FR-205）。"""
+		"""Reuse vectors by text hash and identity. 按文本哈希与身份复用向量。"""
 		hashes = list(dict.fromkeys(text_hashes))
 		result: dict[str, bytes] = {}
 		for start in range(0, len(hashes), 500):
@@ -425,13 +433,6 @@ class Store:
 	def prune_vector_cache(self, identity: str) -> None:
 		self.conn.execute('DELETE FROM vector_cache WHERE identity != ?', (identity,))
 
-	def update_vectors(self, rows: list[tuple[bytes, int]]) -> None:
-		self.conn.executemany('UPDATE chunks SET vec = ? WHERE id = ?', rows)
-
-	def clear_vectors(self) -> None:
-		self.conn.execute('UPDATE chunks SET vec = NULL')
-
-	# ---------------------------------------------------------------- terms & postings
 
 	def load_terms(self) -> dict[str, int]:
 		return {row['term']: int(row['id']) for row in self.conn.execute('SELECT id, term FROM terms').fetchall()}
@@ -454,7 +455,7 @@ class Store:
 		return result
 
 	def insert_postings(self, rows: list[tuple[int, int, int, int]]) -> None:
-		"""rows: (term_id, chunk_pk, tf_body, tf_meta)。"""
+		"""Posting rows. 倒排行。"""
 		self.conn.executemany(
 			'INSERT OR REPLACE INTO postings(term_id, chunk_pk, tf_body, tf_meta) VALUES (?, ?, ?, ?)', rows
 		)
@@ -480,7 +481,6 @@ class Store:
 			params,
 		).fetchall()
 
-	# ---------------------------------------------------------------- identifier runs
 
 	def add_ident_runs(self, chunk_pk: int, runs: Iterable[str]) -> None:
 		values = list(dict.fromkeys(runs))
@@ -511,13 +511,12 @@ class Store:
 			for row in self.conn.execute("SELECT run FROM ident_run WHERE run LIKE ? ESCAPE '\\'", (pattern,))
 		]
 
-	# ---------------------------------------------------------------- failures
 
 	def get_failure(self, doc_id: str) -> dict[str, Any] | None:
 		row = self.conn.execute('SELECT * FROM failures WHERE doc_id = ?', (doc_id,)).fetchone()
 		return dict(row) if row is not None else None
 
-	def set_failure(self, doc_id: str, reason: str, sha256: str, parser_version: str, size: int, mtime_ns: int) -> None:
+	def set_failure(self, record: FailureRecord) -> None:
 		self.conn.execute(
 			"""
 			INSERT INTO failures(doc_id, reason, sha256, parser_version, size, mtime_ns)
@@ -526,7 +525,14 @@ class Store:
 				reason = excluded.reason, sha256 = excluded.sha256, parser_version = excluded.parser_version,
 				size = excluded.size, mtime_ns = excluded.mtime_ns
 			""",
-			(doc_id, reason, sha256, parser_version, size, mtime_ns),
+			(
+				record.doc_id,
+				record.reason,
+				record.sha256,
+				record.parser_version,
+				record.size,
+				record.mtime_ns,
+			),
 		)
 
 	def delete_failure(self, doc_id: str) -> None:
@@ -538,18 +544,8 @@ class Store:
 		)
 		return [dict(row) for row in rows]
 
-	# ---------------------------------------------------------------- gaps
 
-	def record_gap(
-		self,
-		*,
-		query: str,
-		filters_json: str,
-		entry: str,
-		last_result_count: int,
-		missing_identifiers: list[str],
-		now: str,
-	) -> None:
+	def record_gap(self, record: GapRecord) -> None:
 		self.conn.execute(
 			"""
 			INSERT INTO gaps(
@@ -562,7 +558,15 @@ class Store:
 				last_result_count = excluded.last_result_count,
 				missing_identifiers = excluded.missing_identifiers
 			""",
-			(query, filters_json, entry, now, now, last_result_count, _dumps(missing_identifiers)),
+			(
+				record.query,
+				record.filters_json,
+				record.entry,
+				record.now,
+				record.now,
+				record.last_result_count,
+				_dumps(record.missing_identifiers),
+			),
 		)
 
 	def list_gaps(self, limit: int) -> list[dict[str, Any]]:
@@ -583,7 +587,7 @@ class Store:
 		return float(row[0]) if row[0] is not None else 0.0
 
 	def chunks_by_pks(self, chunk_pks: Iterable[int]) -> dict[int, dict[str, Any]]:
-		"""按主键批量取段的检索所需字段。"""
+		"""Fetch chunk fields by primary key. 按主键取段字段。"""
 		pks = list(chunk_pks)
 		result: dict[int, dict[str, Any]] = {}
 		for start in range(0, len(pks), 500):
@@ -602,10 +606,6 @@ class Store:
 				data = self._chunk_row(row)
 				result[int(data['id'])] = data
 		return result
-
-	def ident_run_exists(self, identifier: str) -> bool:
-		rows = self.conn.execute('SELECT run FROM ident_run WHERE instr(run, ?) > 0', (identifier,))
-		return any(identifier_hit(run, identifier) for (run,) in rows)
 
 	def update_doc_stat(self, doc_id: str, size: int, mtime_ns: int, modified_ts: float) -> None:
 		self.conn.execute(

@@ -1,4 +1,4 @@
-"""纯文本解析（FR-302）：按空行分段，没有标题。"""
+"""Plain-text parser. 纯文本解析器。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from axc_wensuo.parsers.base import Block, ParsedDocument, document_title
 
 
 def decode_text(data: bytes, *, path: str = '') -> tuple[str, str]:
-	"""先 UTF-8（含 BOM），失败再 GB18030（FR-302、FR-303）。"""
+	"""UTF-8 first, then GB18030. 先 UTF-8，再 GB18030。"""
 	for encoding in ('utf-8-sig', 'gb18030'):
 		try:
 			return data.decode(encoding), encoding
@@ -15,7 +15,6 @@ def decode_text(data: bytes, *, path: str = '') -> tuple[str, str]:
 	from axc_wensuo.parsers.base import ParseError
 
 	raise ParseError(f'无法按 UTF-8 或 GB18030 解码{("：" + path) if path else ""}')
-
 
 def parse_text(doc_id: str, text: str) -> ParsedDocument:
 	lines = text.splitlines(keepends=True)

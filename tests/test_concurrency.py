@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 import pytest
-from helpers import write, yaml_config
+from helpers import search, write, yaml_config
 
 from axc_wensuo import KnowledgeBase
 from axc_wensuo.store import IndexLock
@@ -18,7 +18,6 @@ DOC = '# 文档\n\n## 小节\n\n关键词内容。\n'
 def _command(root, *args):
 	return [sys.executable, '-m', 'axc_wensuo.cli', '--root', str(root), *args]
 
-
 @pytest.fixture
 def root(tmp_path):
 	root = tmp_path / 'kb'
@@ -27,7 +26,6 @@ def root(tmp_path):
 	for index in range(20):
 		write(root, f'文档/{index:02d}.md', f'# 文档 {index}\n\n## 小节\n\n关键词内容 {index}。\n')
 	return root
-
 
 def test_two_syncs_are_serialized_and_index_is_valid(root):
 	env = os.environ.copy()
@@ -46,10 +44,9 @@ def test_two_syncs_are_serialized_and_index_is_valid(root):
 		assert kb.store.count_docs() == 20
 		integrity = kb.store.conn.execute('PRAGMA integrity_check').fetchone()[0]
 		assert integrity == 'ok'
-		assert kb.search('关键词', sync=False).results
+		assert search(kb, '关键词', sync=False).results
 	finally:
 		kb.close()
-
 
 def test_query_returns_stale_while_another_process_syncs(root):
 	env = os.environ.copy()
@@ -85,7 +82,6 @@ def test_query_returns_stale_while_another_process_syncs(root):
 		env=env,
 	)
 	assert json.loads(after.stdout)['stale'] is False
-
 
 def test_lock_file_is_released(kb_factory):
 	kb = kb_factory({'甲.md': DOC})

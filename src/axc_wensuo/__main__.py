@@ -1,4 +1,4 @@
-"""支持 ``python -m axc_wensuo``。"""
+"""Support python -m axc_wensuo. 支持 python -m axc_wensuo。"""
 
 from axc_wensuo.cli import main
 

@@ -1,11 +1,11 @@
-"""检索过滤条件（FR-631）与对应的 SQL 片段。"""
+"""Query filters and SQL fragments. 检索过滤条件与 SQL 片段。"""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
 import unicodedata
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -18,9 +18,8 @@ def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:
 			result.append(value)
 	return tuple(result)
 
-
 def normalize_file_types(values: tuple[str, ...]) -> tuple[str, ...]:
-	"""扩展名统一为小写无点（FR-631）。"""
+	"""Normalize extensions to lowercase without dot. 扩展名统一为小写无点。"""
 	result: list[str] = []
 	for value in values:
 		item = value.strip().lower()
@@ -31,10 +30,9 @@ def normalize_file_types(values: tuple[str, ...]) -> tuple[str, ...]:
 		result.append(item)
 	return _dedupe(tuple(result))
 
-
 @dataclass(frozen=True)
 class Filters:
-	""" "与"关系的过滤条件集合。"""
+	"""AND-combined query filters. “与”关系的过滤条件。"""
 
 	scope: tuple[str, ...] = ()
 	path_prefix: str | None = None
@@ -55,7 +53,7 @@ class Filters:
 		return not (self.scope or self.path_prefix or self.tags or self.file_types or self.modified_after)
 
 	def to_dict(self) -> dict[str, Any]:
-		"""规范化字典：键排序、去掉空值，用于缺口清单去重。"""
+		"""Canonical dict for gap dedupe. 用于缺口去重的规范字典。"""
 		data: dict[str, Any] = {}
 		if self.file_types:
 			data['file_types'] = list(self.file_types)
@@ -73,7 +71,7 @@ class Filters:
 		return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 	def where(self, alias: str) -> tuple[str, list[Any]]:
-		"""生成 SQL 条件（不含 ``WHERE``）。``alias`` 指向含 doc_id/scope/modified_ts 的表。"""
+		"""Build SQL conditions for an alias. 生成别名对应的 SQL 条件。"""
 		conditions: list[str] = []
 		params: list[Any] = []
 		if self.scope:
@@ -94,19 +92,15 @@ class Filters:
 			params.append(local_midnight(self.modified_after))
 		return ' AND '.join(conditions), params
 
-
 def _nfc(value: str) -> str:
 	return unicodedata.normalize('NFC', value)
-
 
 def _escape_like(value: str) -> str:
 	return value.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
 
-
 def local_midnight(day: dt.date) -> float:
-	"""本地时区该日 00:00 的时间戳（FR-631）。"""
+	"""Local midnight timestamp. 本地时区当日 00:00。"""
 	return dt.datetime.combine(day, dt.time.min).timestamp()
-
 
 def parse_modified_after(value: str) -> dt.date:
 	try:
@@ -115,13 +109,3 @@ def parse_modified_after(value: str) -> dt.date:
 		from axc_wensuo.errors import ConfigError
 
 		raise ConfigError(f'--modified-after 必须是 YYYY-MM-DD 格式：{value!r}') from exc
-
-
-@dataclass(frozen=True)
-class QueryOptions:
-	"""一次检索的全部参数。"""
-
-	top_k: int = 5
-	max_chars: int = 800
-	filters: Filters = field(default_factory=Filters)
-	min_score: float | None = None

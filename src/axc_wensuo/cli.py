@@ -1,105 +1,121 @@
-"""命令行 ``ws``（第 8.1 节）。
-
-只管参数解析与输出格式化，检索逻辑全部在 :class:`~axc_wensuo.kb.KnowledgeBase`。退出码：
-0 成功、1 ``search`` 无结果 / ``read`` / ``show`` 找不到对象、2 参数或配置错误、3 运行错误。
-"""
+"""ws command line entry. ws 命令行入口。"""
 
 from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from typing import Any
 
 from axc_wensuo import __version__
 from axc_wensuo.config import load_config, resolve_root
 from axc_wensuo.dense import download_model
-from axc_wensuo.errors import WenSuoError
-from axc_wensuo.filters import parse_modified_after
-from axc_wensuo.kb import KnowledgeBase
+from axc_wensuo.errors import WenSuoError, WenSuoRuntimeError
+from axc_wensuo.filters import Filters, parse_modified_after
+from axc_wensuo.kb import KnowledgeBase, ListDocsOptions, ReadOptions, SearchOptions
 from axc_wensuo.models import ErrorResult, Location
 
 _LAST_PARSE_ERROR: list[str] = []
 
 
 class _ArgumentParser(argparse.ArgumentParser):
-	"""参数错误时记录信息，便于 ``--format json`` 输出结构化错误。"""
+	"""Record parse errors for JSON output. 记录参数错误以便 JSON 输出。"""
 
 	def error(self, message: str) -> None:
 		_LAST_PARSE_ERROR.append(message)
 		self.print_usage(sys.stderr)
 		self.exit(2, f'{self.prog}: error: {message}\n')
 
-
 def build_parser() -> argparse.ArgumentParser:
 	parser = _ArgumentParser(prog='ws', description='AxcWenSuo: offline Chinese-first RAG engine')
 	parser.add_argument('--root', help='知识库根目录')
 	parser.add_argument('--kb', help='全局配置中登记的知识库名')
 	parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
-	subparsers = parser.add_subparsers(dest='command')
-
-	search = subparsers.add_parser('search', help='检索')
-	search.add_argument('query', help='查询文本')
-	search.add_argument('--top-k', type=int, default=5, help='返回条数（默认 5）')
-	search.add_argument('--scope', action='append', help='按专题过滤，可重复（或关系）')
-	search.add_argument('--path-prefix', help='按 doc_id 字符串前缀过滤')
-	search.add_argument('--tag', action='append', dest='tags', help='按标签过滤，可重复（须全部命中）')
-	search.add_argument('--file-type', action='append', dest='file_types', help='按扩展名过滤，可重复（带不带点均可）')
-	search.add_argument('--modified-after', help='只返回该日期（含）之后修改的文件，YYYY-MM-DD')
-	search.add_argument('--min-score', type=float, help='校准阈值，仅开启重排时可用')
-	search.add_argument('--max-chars', type=int, default=800, help='结果正文最大码点数（默认 800）')
-	search.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-	search.add_argument('--no-sync', action='store_true', help='跳过自动同步，使用现有索引')
-	search.add_argument('--threads', type=int, help='线程数')
-
-	read = subparsers.add_parser('read', help='读取文档或章节')
-	read.add_argument('doc_id', help='文档 ID（相对知识库根目录）')
-	read.add_argument('--section', help='章节路径，例如 "父标题 > 子标题"')
-	read.add_argument('--offset', type=int, default=0, help='起始码点偏移（默认 0）')
-	read.add_argument('--max-chars', type=int, default=20000, help='最多返回的码点数（默认 20000）')
-	read.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-	read.add_argument('--no-sync', action='store_true', help='跳过自动同步')
-
-	show = subparsers.add_parser('show', help='显示单个段')
-	show.add_argument('chunk_id', help='段 ID（16 位十六进制）')
-	show.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	docs = subparsers.add_parser('docs', help='列出文档')
-	docs.add_argument('--scope', action='append', help='按专题过滤，可重复')
-	docs.add_argument('--path-prefix', help='按 doc_id 前缀过滤')
-	docs.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-	docs.add_argument('--no-sync', action='store_true', help='跳过自动同步')
-
-	scopes = subparsers.add_parser('scopes', help='列出专题')
-	scopes.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	sync = subparsers.add_parser('sync', help='同步索引')
-	sync.add_argument('--threads', type=int, help='线程数')
-	sync.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	doctor = subparsers.add_parser('doctor', help='诊断')
-	doctor.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	gaps = subparsers.add_parser('gaps', help='缺口清单')
-	gaps.add_argument('--limit', type=int, default=50, help='最多列出条数（默认 50）')
-	gaps.add_argument('--clear', action='store_true', help='先清空缺口清单')
-	gaps.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	eval_parser = subparsers.add_parser('eval', help='评测')
-	eval_parser.add_argument('queries', help='JSONL 评测集路径')
-	eval_parser.add_argument('--modes', default='fused', help='逗号分隔的模式：lexical,dense,fused,rerank')
-	eval_parser.add_argument('--k', type=int, default=5, help='默认截断条数（默认 5）')
-	eval_parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	models = subparsers.add_parser('models', help='模型管理')
-	models_sub = models.add_subparsers(dest='models_command')
-	models_download = models_sub.add_parser('download', help='下载默认向量模型')
-	models_download.add_argument('--force', action='store_true', help='即使校验通过也重新下载')
-	models_download.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
-
-	subparsers.add_parser('mcp', help='启动 stdio MCP 服务')
+	sub = parser.add_subparsers(dest='command')
+	_add_search(sub)
+	_add_read(sub)
+	_add_show(sub)
+	_add_docs(sub)
+	_add_scopes(sub)
+	_add_sync(sub)
+	_add_doctor(sub)
+	_add_gaps(sub)
+	_add_eval(sub)
+	_add_models(sub)
+	_add_mcp(sub)
 	return parser
 
+def _add_search(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('search', help='检索')
+	parser.add_argument('query', help='查询文本')
+	parser.add_argument('--top-k', type=int, default=5, help='返回条数（默认 5）')
+	parser.add_argument('--scope', action='append', help='按专题过滤，可重复（或关系）')
+	parser.add_argument('--path-prefix', help='按 doc_id 字符串前缀过滤')
+	parser.add_argument('--tag', action='append', dest='tags', help='按标签过滤，可重复（须全部命中）')
+	parser.add_argument('--file-type', action='append', dest='file_types', help='按扩展名过滤')
+	parser.add_argument('--modified-after', help='只返回该日期（含）之后修改的文件，YYYY-MM-DD')
+	parser.add_argument('--min-score', type=float, help='校准阈值，仅开启重排时可用')
+	parser.add_argument('--max-chars', type=int, default=800, help='结果正文最大码点数（默认 800）')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+	parser.add_argument('--no-sync', action='store_true', help='跳过自动同步')
+	parser.add_argument('--threads', type=int, help='线程数')
+
+def _add_read(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('read', help='读取文档或章节')
+	parser.add_argument('doc_id', help='文档 ID（相对知识库根目录）')
+	parser.add_argument('--section', help='章节路径，例如 "父标题 > 子标题"')
+	parser.add_argument('--offset', type=int, default=0, help='起始码点偏移（默认 0）')
+	parser.add_argument('--max-chars', type=int, default=20000, help='最多返回的码点数')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+	parser.add_argument('--no-sync', action='store_true', help='跳过自动同步')
+
+def _add_show(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('show', help='显示单个段')
+	parser.add_argument('chunk_id', help='段 ID（16 位十六进制）')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_docs(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('docs', help='列出文档')
+	parser.add_argument('--scope', action='append', help='按专题过滤，可重复')
+	parser.add_argument('--path-prefix', help='按 doc_id 前缀过滤')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+	parser.add_argument('--no-sync', action='store_true', help='跳过自动同步')
+
+def _add_scopes(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('scopes', help='列出专题')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_sync(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('sync', help='同步索引')
+	parser.add_argument('--threads', type=int, help='线程数')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_doctor(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('doctor', help='诊断')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_gaps(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('gaps', help='缺口清单')
+	parser.add_argument('--limit', type=int, default=50, help='最多列出条数（默认 50）')
+	parser.add_argument('--clear', action='store_true', help='先清空缺口清单')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_eval(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('eval', help='评测')
+	parser.add_argument('queries', help='JSONL 评测集路径')
+	parser.add_argument('--modes', default='fused', help='逗号分隔的模式：lexical,dense,fused,rerank')
+	parser.add_argument('--k', type=int, default=5, help='默认截断条数（默认 5）')
+	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_models(sub: argparse._SubParsersAction) -> None:
+	parser = sub.add_parser('models', help='模型管理')
+	download = parser.add_subparsers(dest='models_command').add_parser('download', help='下载默认向量模型')
+	download.add_argument('--force', action='store_true', help='即使校验通过也重新下载')
+	download.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
+
+def _add_mcp(sub: argparse._SubParsersAction) -> None:
+	sub.add_parser('mcp', help='启动 stdio MCP 服务')
 
 def main(argv: list[str] | None = None) -> int:
 	parser = build_parser()
@@ -122,9 +138,10 @@ def main(argv: list[str] | None = None) -> int:
 		return _emit_error(exc, format_name)
 	except BrokenPipeError:
 		return 0
+	except (sqlite3.Error, OSError) as exc:
+		return _emit_error(WenSuoRuntimeError(f'运行错误：{exc}'), format_name)
 	except KeyboardInterrupt:
 		return 130
-
 
 def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 	if args.command == 'models':
@@ -159,7 +176,6 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 	finally:
 		kb.close()
 
-
 def _open_kb(args: argparse.Namespace) -> KnowledgeBase:
 	root = resolve_root(args.root, args.kb)
 	kb = KnowledgeBase(root)
@@ -168,37 +184,31 @@ def _open_kb(args: argparse.Namespace) -> KnowledgeBase:
 		kb.config = kb.config.with_threads(threads)
 	return kb
 
-
 def _run_search(kb: KnowledgeBase, args: argparse.Namespace) -> int:
-	modified_after = parse_modified_after(args.modified_after) if args.modified_after else None
-	result = kb.search(
-		args.query,
-		top_k=args.top_k,
-		scope=args.scope,
+	filters = Filters(
+		scope=tuple(args.scope or ()),
 		path_prefix=args.path_prefix,
-		tags=args.tags,
-		file_types=args.file_types,
-		modified_after=modified_after,
+		tags=tuple(args.tags or ()),
+		file_types=tuple(args.file_types or ()),
+		modified_after=parse_modified_after(args.modified_after) if args.modified_after else None,
+	)
+	options = SearchOptions(
+		filters=filters,
 		min_score=args.min_score,
 		max_chars=args.max_chars,
 		sync=not args.no_sync,
 		entry='cli',
 	)
+	result = kb.search(args.query, top_k=args.top_k, options=options)
 	if args.format == 'json':
 		_pretty_json(result.to_dict())
 	else:
 		_render_search_text(result, args.max_chars)
 	return 0 if result.results else 1
 
-
 def _run_read(kb: KnowledgeBase, args: argparse.Namespace) -> int:
-	result = kb.read(
-		args.doc_id,
-		section=args.section,
-		offset=args.offset,
-		max_chars=args.max_chars,
-		sync=not args.no_sync,
-	)
+	options = ReadOptions(offset=args.offset, max_chars=args.max_chars, sync=not args.no_sync)
+	result = kb.read(args.doc_id, section=args.section, options=options)
 	if result is None:
 		label = f'找不到文档或章节：{args.doc_id}' + (f' > {args.section}' if args.section else '')
 		return _emit_not_found(label, args.format)
@@ -209,7 +219,6 @@ def _run_read(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 		if result.text and not result.text.endswith('\n'):
 			sys.stdout.write('\n')
 	return 0
-
 
 def _run_show(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 	result = kb.show(args.chunk_id)
@@ -226,13 +235,9 @@ def _run_show(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 		print(result.text)
 	return 0
 
-
 def _run_docs(kb: KnowledgeBase, args: argparse.Namespace) -> int:
-	result = kb.list_docs(
-		scope=args.scope,
-		path_prefix=args.path_prefix,
-		sync=not args.no_sync,
-	)
+	filters = Filters(scope=tuple(args.scope or ()), path_prefix=args.path_prefix)
+	result = kb.list_docs(options=ListDocsOptions(filters=filters, sync=not args.no_sync))
 	if args.format == 'json':
 		_pretty_json(result.to_dict())
 	else:
@@ -241,7 +246,6 @@ def _run_docs(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 			fields = [doc.doc_id, doc.scope, str(doc.chunks), doc.modified, doc.doc_title]
 			print('\t'.join(fields))
 	return 0
-
 
 def _run_scopes(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 	result = kb.list_scopes()
@@ -252,7 +256,6 @@ def _run_scopes(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 		for scope in result.scopes:
 			print(f'{scope.scope}\t{scope.docs}\t{scope.description or ""}')
 	return 0
-
 
 def _run_sync(args: argparse.Namespace) -> int:
 	kb = _open_kb(args)
@@ -273,7 +276,6 @@ def _run_sync(args: argparse.Namespace) -> int:
 	else:
 		_print_sync_report(report)
 	return 0
-
 
 def _run_doctor(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 	result = kb.doctor()
@@ -303,7 +305,6 @@ def _run_doctor(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 			print(f'失败: {item.doc_id}（{item.reason}）')
 	return 0
 
-
 def _run_gaps(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 	if args.clear:
 		count = kb.clear_gaps()
@@ -316,7 +317,6 @@ def _run_gaps(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 		for gap in result.gaps:
 			print(f'{gap.count}\t{gap.last_seen}\t{gap.entry}\t{gap.query}')
 	return 0
-
 
 def _run_eval(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 	modes = [mode.strip() for mode in args.modes.split(',') if mode.strip()]
@@ -334,7 +334,6 @@ def _run_eval(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 			)
 	return 0
 
-
 def _run_mcp(args: argparse.Namespace) -> int:
 	from axc_wensuo.mcp_server import run_server
 
@@ -344,10 +343,6 @@ def _run_mcp(args: argparse.Namespace) -> int:
 	finally:
 		kb.close()
 	return 0
-
-
-# ---------------------------------------------------------------- 输出
-
 
 def _render_search_text(result, max_chars: int) -> None:
 	if result.missing_identifiers:
@@ -367,7 +362,6 @@ def _render_search_text(result, max_chars: int) -> None:
 			text = text + '…'
 		print(text)
 
-
 def _format_location(location: Location) -> str:
 	if location.kind == 'lines':
 		return f'L{location.start}-{location.end}'
@@ -379,7 +373,6 @@ def _format_location(location: Location) -> str:
 		return f'{location.sheet}!r{location.row_start}-{location.row_end}'
 	return ''
 
-
 def _print_sync_report(report) -> None:
 	print(
 		f'新增 {len(report.added)}，修改 {len(report.modified)}，删除 {len(report.deleted)}，'
@@ -390,20 +383,17 @@ def _print_sync_report(report) -> None:
 	for doc_id in report.failed:
 		print(f'失败: {doc_id}', file=sys.stderr)
 
-
 def _emit_error(exc: WenSuoError, format_name: str) -> int:
 	print(exc.message, file=sys.stderr)
 	if format_name == 'json':
 		_pretty_json(ErrorResult(code=exc.code, message=exc.message).to_dict())
 	return exc.code
 
-
 def _emit_not_found(message: str, format_name: str) -> int:
 	print(message, file=sys.stderr)
 	if format_name == 'json':
 		_pretty_json(ErrorResult(code=1, message=message).to_dict())
 	return 1
-
 
 def _wants_json(argv: list[str] | None) -> bool:
 	values = list(argv) if argv is not None else sys.argv[1:]
@@ -414,18 +404,14 @@ def _wants_json(argv: list[str] | None) -> bool:
 			return True
 	return False
 
-
 def _pretty_json(data: dict[str, Any]) -> None:
 	print(json.dumps(data, ensure_ascii=False, indent=2))
-
 
 def _metric(value: float | None) -> str:
 	return 'null' if value is None else f'{value:.4f}'
 
-
 def _pairs(mapping: dict[str, Any]) -> str:
 	return ', '.join(f'{key}={value}' for key, value in mapping.items()) or '无'
-
 
 def _format_bytes(size: int) -> str:
 	if size < 1024:

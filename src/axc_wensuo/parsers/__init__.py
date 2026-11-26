@@ -1,8 +1,4 @@
-"""解析器注册与文件入口。
-
-核心格式（Markdown、TXT、CSV、TSV）随核心包提供；PDF、DOCX、PPTX、XLSX、HTML 需要 ``docs``
-扩展（Docling）。扩展名不区分大小写。
-"""
+"""Parser registry and file entry. 解析器注册与文件入口。"""
 
 from __future__ import annotations
 
@@ -16,11 +12,10 @@ from axc_wensuo.parsers.base import (
 	clean_heading,
 	document_title,
 	find_section,
-	heading_chains,
 	normalize_meta_list,
 	render_table,
 )
-from axc_wensuo.parsers.docling import docling_available, parse_docling
+from axc_wensuo.parsers.docling import docling_available, parse_docling, remove_parsed_cache
 from axc_wensuo.parsers.markdown import parse_markdown
 from axc_wensuo.parsers.table import parse_table
 from axc_wensuo.parsers.text import decode_text, parse_text
@@ -36,7 +31,6 @@ _TABLE_EXTS = {'.csv': ',', '.tsv': '\t'}
 def docs_extra_available() -> bool:
 	return docling_available()
 
-
 def parser_version_for(extension: str) -> str:
 	suffix = extension.lower()
 	if suffix in _MD_EXTS:
@@ -51,14 +45,10 @@ def parser_version_for(extension: str) -> str:
 		return docling_parser.parser_version()
 	return 'unknown:0'
 
-
 def parse_file(path: str | Path, doc_id: str, *, index_dir: str | Path | None = None) -> ParsedDocument:
 	file_path = Path(path)
 	suffix = file_path.suffix.lower()
-	try:
-		data = file_path.read_bytes()
-	except OSError as exc:
-		raise ParseError(f'无法读取文件：{exc}') from exc
+	data = file_path.read_bytes()
 	if suffix in DOCS_EXTENSIONS:
 		if index_dir is None:
 			raise ParseError('解析该格式需要索引目录（用于解析缓存）')
@@ -86,9 +76,9 @@ __all__ = [
 	'docs_extra_available',
 	'document_title',
 	'find_section',
-	'heading_chains',
 	'normalize_meta_list',
 	'parse_file',
+	'remove_parsed_cache',
 	'parser_version_for',
 	'render_table',
 ]

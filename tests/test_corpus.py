@@ -1,4 +1,4 @@
-"""公开语料的结构检查（需求第 11.1 节）。"""
+"""Corpus structure checks. 公开语料结构检查。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ def test_corpus_layout():
 	present = {path.relative_to(FIXTURES).as_posix() for path in FIXTURES.rglob('*') if path.is_file()}
 	assert required <= present
 
-
 def test_corpus_text_features():
 	guide = (FIXTURES / '运维' / '部署手册.md').read_text(encoding='utf-8')
 	assert guide.startswith('---')
@@ -43,7 +42,6 @@ def test_corpus_text_features():
 
 	csv_text = (FIXTURES / '数据' / '员工.csv').read_text(encoding='utf-8')
 	assert csv_text.splitlines()[0] == '工号,姓名,部门,权限'
-
 
 def test_corpus_binary_formats():
 	pdf = (FIXTURES / '数据' / '巡检报告.pdf').read_bytes()

@@ -29,6 +29,12 @@
 - 测试：170+ 个自动化测试，覆盖需求 A-01 ~ A-25（Docling 相关用例在缺扩展时跳过）。
 - 开源配套：README、贡献指南、行为准则、安全策略、CI（Linux/macOS/Windows × Python 3.11–3.13）。
 
+### Changed
+
+- 检索、阅读、列表 API 使用 `SearchOptions` / `ReadOptions` / `ListDocsOptions` 聚合可选参数，每个函数参数不超过 5 个。
+- 失败策略收紧：只有解析失败（`ParseError`）会被隔离并上报；缺模型、配置错误、写入失败、缓存损坏直接抛错，不做兜底或静默重试。
+- 代码规范：注释中英双语、单行；方法/类之间 1 个空行；移除 MCP 1.x/2.x 双兼容与多余防御分支。
+
 ### Known issues
 
 - 默认向量模型的 `models-v1` Release 尚未发布；`ws models download` 会明确报错，需使用

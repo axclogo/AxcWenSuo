@@ -1,20 +1,17 @@
-"""PDF / Word / PowerPoint / Excel / HTML 解析（FR-304、FR-305），依赖可选 ``docs`` 扩展 Docling。
-
-解析结果按「文件 SHA-256 + Docling 版本」缓存到 ``<index_dir>/parsed/``，切段配置变化时不重新解析。
-Docling 不可用时由同步层记为“缺少 docs 扩展”跳过，不在这里报致命错误。
-"""
+"""Docling adapter for PDF, Office, and HTML. PDF/Office/HTML 的 Docling 适配层。"""
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import importlib.util
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from axc_wensuo.errors import WenSuoRuntimeError
+from axc_wensuo.hashing import file_sha256
 from axc_wensuo.models import Location
 from axc_wensuo.parsers.base import Block, ParsedDocument, ParseError, Table, document_title, render_table
 
@@ -26,65 +23,42 @@ _SAFE_VERSION_RE = re.compile(r'[^0-9A-Za-z_.\-]+')
 def docling_available() -> bool:
 	return importlib.util.find_spec('docling') is not None
 
-
 def docling_version() -> str:
-	if not docling_available():
-		return 'missing'
+	"""Return the installed Docling version. 返回 Docling 版本。"""
 	try:
 		return importlib.metadata.version('docling')
-	except Exception:  # pragma: no cover - 仅防御异常分发元数据
-		return 'unknown'
-
+	except importlib.metadata.PackageNotFoundError as exc:
+		raise WenSuoRuntimeError('Docling 已安装但缺少包元数据；请重新安装 docs 扩展') from exc
 
 def parser_version() -> str:
 	return f'{PARSER_NAME}:{docling_version()}'
 
-
-def parse_docling(doc_id: str, path: Path, index_dir: Path) -> ParsedDocument:
-	if not docling_available():
-		raise WenSuoRuntimeError('缺少 docs 扩展：请安装 docling（pip install "axc-wensuo[docs]"）后重试')
-	digest = _sha256(path)
-	cache_file = parsed_cache_path(index_dir, digest, docling_version())
-	cache_file.parent.mkdir(parents=True, exist_ok=True)
-	if cache_file.is_file():
-		try:
-			data = json.loads(cache_file.read_text(encoding='utf-8'))
-			return _from_cache(doc_id, data)
-		except (OSError, ValueError, KeyError):
-			pass
-	document = _convert(path)
-	parsed = _build(doc_id, path.suffix.lower(), document)
-	try:
-		cache_file.write_text(json.dumps(_to_cache(parsed), ensure_ascii=False), encoding='utf-8')
-	except OSError:
-		pass
-	return parsed
-
-
 def parsed_cache_path(index_dir: str | Path, sha256: str, version: str) -> Path:
 	return Path(index_dir) / 'parsed' / f'{sha256}-{_SAFE_VERSION_RE.sub("_", version)}.json'
 
-
 def remove_parsed_cache(index_dir: str | Path, sha256: str, parser_version: str) -> bool:
-	"""文件被删除时一并删除 Docling 解析缓存（FR-203）。"""
+	"""Remove the cache for a deleted file. 删除文件时清理解析缓存。"""
 	if not parser_version.startswith(f'{PARSER_NAME}:'):
 		return False
-	version = parser_version.split(':', 1)[1]
-	path = parsed_cache_path(index_dir, sha256, version)
+	path = parsed_cache_path(index_dir, sha256, parser_version.split(':', 1)[1])
 	try:
 		path.unlink()
 	except FileNotFoundError:
 		return False
 	return True
 
-
-def _sha256(path: Path) -> str:
-	digest = hashlib.sha256()
-	with path.open('rb') as handle:
-		for chunk in iter(lambda: handle.read(1024 * 1024), b''):
-			digest.update(chunk)
-	return digest.hexdigest()
-
+def parse_docling(doc_id: str, path: Path, index_dir: Path) -> ParsedDocument:
+	"""Parse one file through Docling. 通过 Docling 解析单个文件。"""
+	if not docling_available():
+		raise WenSuoRuntimeError('缺少 docs 扩展：请安装 docling（pip install "axc-wensuo[docs]"）后重试')
+	digest = file_sha256(path)
+	cache_file = parsed_cache_path(index_dir, digest, docling_version())
+	if cache_file.is_file():
+		return _read_cache(cache_file, doc_id)
+	document = _convert(path)
+	parsed = _build(doc_id, path.suffix.lower(), document)
+	_write_cache(cache_file, parsed)
+	return parsed
 
 def _convert(path: Path) -> Any:
 	global _CONVERTER
@@ -92,118 +66,109 @@ def _convert(path: Path) -> Any:
 		from docling.document_converter import DocumentConverter
 
 		_CONVERTER = DocumentConverter()
+	from docling.exceptions import ConversionError
+
 	try:
 		result = _CONVERTER.convert(str(path))
-	except Exception as exc:
+	except ConversionError as exc:
 		raise ParseError(f'Docling 解析失败：{exc}') from exc
-	return getattr(result, 'document', result)
-
+	return result.document
 
 def _build(doc_id: str, extension: str, document: Any) -> ParsedDocument:
-	parts: list[str] = []
-	blocks: list[Block] = []
-	offset = 0
+	collector = _BlockCollector(extension)
+	sheet: str | None = None
+	sheet_level: int | None = None
+	for item, level in document.iterate_items(with_groups=True):
+		label = _label(item)
+		if label == 'sheet':
+			sheet, sheet_level = str(getattr(item, 'name', '') or ''), level
+			continue
+		if sheet_level is not None and level <= sheet_level:
+			sheet, sheet_level = None, None
+		if 'table' in label:
+			collector.add_table(item, sheet)
+			continue
+		text = str(getattr(item, 'text', '') or '')
+		if not text.strip():
+			continue
+		if 'section_header' in label or label in ('title', 'doc_title'):
+			collector.add_heading(item, text, level, sheet)
+		else:
+			collector.add_text('list' if 'list' in label else 'paragraph', text, item, sheet)
+	return collector.document(doc_id)
 
-	def add(
-		kind: str,
-		text: str,
-		*,
-		level: int = 0,
-		label: str | None = None,
-		location: Location | None = None,
-		table: Table | None = None,
-	) -> None:
-		nonlocal offset
+def _label(item: Any) -> str:
+	raw = getattr(item, 'label', '')
+	return str(getattr(raw, 'value', raw)).lower()
+
+@dataclass(frozen=True)
+class _BlockMeta:
+	location: Location
+	level: int = 0
+	label: str | None = None
+	table: Table | None = None
+
+class _BlockCollector:
+	"""Accumulate blocks and markdown text. 累积块与 Markdown 文本。"""
+
+	def __init__(self, extension: str) -> None:
+		self.extension = extension
+		self.parts: list[str] = []
+		self.blocks: list[Block] = []
+		self.offset = 0
+
+	def add_heading(self, item: Any, text: str, level: int | None, sheet: str | None) -> None:
+		heading_level = min(level, 6) if isinstance(level, int) and level > 0 else 1
+		location = _item_location(item, self.extension, sheet=sheet)
+		self._append(
+			'heading',
+			f'{"#" * heading_level} {text.strip()}',
+			_BlockMeta(location, level=heading_level, label=text.strip()),
+		)
+
+	def add_text(self, kind: str, text: str, item: Any, sheet: str | None) -> None:
+		self._append(kind, text, _BlockMeta(_item_location(item, self.extension, sheet=sheet)))
+
+	def add_table(self, item: Any, sheet: str | None) -> None:
+		rows = _table_rows(item)
+		location = _item_location(item, self.extension, sheet=sheet, rows=rows)
+		table = Table(rows=rows, header_rows=1, sheet=sheet, row_start=location.row_start)
+		self._append('table', render_table(rows), _BlockMeta(location, table=table))
+
+	def _append(self, kind: str, text: str, meta: _BlockMeta) -> None:
 		if not text.strip():
 			return
-		start = offset
-		parts.append(text)
-		offset += len(text) + 2
-		blocks.append(
+		start = self.offset
+		self.parts.append(text)
+		self.offset += len(text) + 2
+		self.blocks.append(
 			Block(
 				kind=kind,
 				start=start,
 				end=start + len(text),
 				text=text,
-				level=level,
-				label=label,
-				location=location or Location(kind='section'),
-				table=table,
+				level=meta.level,
+				label=meta.label,
+				location=meta.location,
+				table=meta.table,
 			)
 		)
 
-	items = document.iterate_items(with_groups=True) if hasattr(document, 'iterate_items') else []
-	sheet: str | None = None
-	sheet_level: int | None = None
-	for item, level in items:
-		raw_label = getattr(item, 'label', '')
-		label = str(getattr(raw_label, 'value', raw_label)).lower()
-		if label == 'sheet':
-			sheet = str(getattr(item, 'name', '') or '')
-			sheet_level = level
-			continue
-		if sheet_level is not None and level <= sheet_level:
-			sheet = None
-			sheet_level = None
-		text = str(getattr(item, 'text', '') or '')
-		if 'table' in label:
-			rows = _table_rows(item, document)
-			if not rows:
-				continue
-			location = _item_location(item, extension, sheet=sheet, rows=rows)
-			table = Table(
-				rows=rows,
-				header_rows=1,
-				sheet=sheet,
-				row_start=location.row_start if location.kind == 'sheet' else None,
-			)
-			add('table', render_table(rows), location=location, table=table)
-			continue
-		if not text.strip():
-			continue
-		heading_level = int(level) if isinstance(level, int) and level > 0 else 1
-		location = _item_location(item, extension, sheet=sheet)
-		if 'section_header' in label or label in ('title', 'doc_title'):
-			add(
-				'heading',
-				'#' * min(heading_level, 6) + ' ' + text.strip(),
-				level=min(heading_level, 6),
-				label=text.strip(),
-				location=location,
-			)
-			continue
-		kind = 'list' if 'list' in label else 'paragraph'
-		add(kind, text, location=location)
+	def document(self, doc_id: str) -> ParsedDocument:
+		return ParsedDocument(
+			doc_id=doc_id,
+			doc_title=document_title(None, self.blocks, doc_id),
+			text='\n\n'.join(self.parts),
+			blocks=self.blocks,
+			format='docling',
+		)
 
-	body = '\n\n'.join(parts)
-	return ParsedDocument(
-		doc_id=doc_id,
-		doc_title=document_title(None, blocks, doc_id),
-		text=body,
-		blocks=blocks,
-		format='docling',
-	)
-
-
-def _table_rows(item: Any, document: Any) -> list[list[str]]:
-	exporter = getattr(item, 'export_to_dataframe', None)
-	if callable(exporter):
-		try:
-			frame = exporter(document)
-			rows = [[str(column) for column in frame.columns]]
-			rows.extend([str(value) for value in row] for row in frame.itertuples(index=False, name=None))
-			return rows
-		except Exception:
-			pass
+def _table_rows(item: Any) -> list[list[str]]:
 	data = getattr(item, 'data', None)
 	grid = getattr(data, 'grid', None) if data is not None else None
-	if grid:
-		rows = []
-		for row in grid:
-			rows.append([str(getattr(cell, 'text', '') or '') for cell in row])
-		return rows
-	return []
-
+	if not grid:
+		raise ParseError('Docling 表格缺少单元格数据')
+	return [[str(getattr(cell, 'text', '') or '') for cell in row] for row in grid]
 
 def _item_location(item: Any, extension: str, *, sheet: str | None = None, rows: Any = None) -> Location:
 	provenance = getattr(item, 'prov', None) or []
@@ -213,11 +178,23 @@ def _item_location(item: Any, extension: str, *, sheet: str | None = None, rows:
 	if extension == '.pptx' and pages:
 		return Location(kind='slide', start=min(pages), end=max(pages))
 	if extension == '.xlsx' and sheet:
-		# Docling 把每个工作表当成一页；表头固定为第 1 行（需求 8.3）
-		row_count = len(rows) if rows else 2
-		return Location(kind='sheet', sheet=sheet, row_start=2, row_end=max(2, row_count))
+		row_end = max(2, len(rows)) if rows else 2
+		return Location(kind='sheet', sheet=sheet, row_start=2, row_end=row_end)
 	return Location(kind='section')
 
+def _read_cache(cache_file: Path, doc_id: str) -> ParsedDocument:
+	try:
+		data = json.loads(cache_file.read_text(encoding='utf-8'))
+		return _from_cache(doc_id, data)
+	except (OSError, ValueError, KeyError, TypeError) as exc:
+		raise WenSuoRuntimeError(f'解析缓存损坏：{cache_file}；请删除该文件后重试') from exc
+
+def _write_cache(cache_file: Path, parsed: ParsedDocument) -> None:
+	cache_file.parent.mkdir(parents=True, exist_ok=True)
+	try:
+		cache_file.write_text(json.dumps(_to_cache(parsed), ensure_ascii=False), encoding='utf-8')
+	except OSError as exc:
+		raise WenSuoRuntimeError(f'无法写入解析缓存 {cache_file}：{exc}') from exc
 
 def _to_cache(parsed: ParsedDocument) -> dict[str, Any]:
 	return {
@@ -246,16 +223,15 @@ def _to_cache(parsed: ParsedDocument) -> dict[str, Any]:
 		],
 	}
 
-
 def _from_cache(doc_id: str, data: dict[str, Any]) -> ParsedDocument:
 	blocks: list[Block] = []
-	for raw in data.get('blocks', []):
+	for raw in data['blocks']:
 		table_raw = raw.get('table')
 		table = None
 		if table_raw is not None:
 			table = Table(
-				rows=table_raw.get('rows', []),
-				header_rows=table_raw.get('header_rows', 1),
+				rows=table_raw['rows'],
+				header_rows=table_raw['header_rows'],
 				row_lines=table_raw.get('row_lines', []),
 				sheet=table_raw.get('sheet'),
 				row_start=table_raw.get('row_start'),
@@ -268,14 +244,14 @@ def _from_cache(doc_id: str, data: dict[str, Any]) -> ParsedDocument:
 				text=raw['text'],
 				level=raw.get('level', 0),
 				label=raw.get('label'),
-				location=Location.from_dict(raw.get('location') or {'kind': 'section'}),
+				location=Location.from_dict(raw['location']),
 				table=table,
 			)
 		)
 	return ParsedDocument(
 		doc_id=doc_id,
-		doc_title=data.get('doc_title') or document_title(None, blocks, doc_id),
-		text=data.get('text', ''),
+		doc_title=data['doc_title'],
+		text=data['text'],
 		blocks=blocks,
 		format='docling',
 	)

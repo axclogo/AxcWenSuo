@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""生成公开测试语料 ``tests/fixtures/corpus/``（需求第 11.1 节）。
-
-生成的文件都是虚构内容，不含任何真实组织信息。二进制格式需要额外依赖，用临时环境运行::
-
-	uv run --with python-docx --with python-pptx --with openpyxl --with reportlab \\
-		python tools/make_fixtures.py
-
-Markdown、TXT、CSV 是本脚本直接写出的文本文件。
-"""
+"""Generate the public test corpus. 生成公开测试语料。"""
 
 from __future__ import annotations
 
@@ -135,7 +127,6 @@ def write_text_files() -> None:
 		writer.writerows(CSV_ROWS)
 	(CORPUS / '接口说明.html').write_text(HTML, encoding='utf-8')
 
-
 def write_pdf() -> None:
 	from reportlab.lib import colors
 	from reportlab.lib.pagesizes import A4
@@ -182,7 +173,6 @@ def write_pdf() -> None:
 	]
 	document.build(story)
 
-
 def write_docx() -> None:
 	from docx import Document
 
@@ -200,7 +190,6 @@ def write_docx() -> None:
 	table.cell(2, 1).text = '800'
 	document.save(CORPUS / '数据' / '年度总结.docx')
 
-
 def write_pptx() -> None:
 	from pptx import Presentation
 
@@ -212,7 +201,6 @@ def write_pptx() -> None:
 	second.shapes.title.text = '里程碑'
 	second.placeholders[1].text = '第二页：关键里程碑 ZEPHYR-PPT'
 	prs.save(CORPUS / '运维' / '项目汇报.pptx')
-
 
 def write_xlsx() -> None:
 	from openpyxl import Workbook
@@ -228,7 +216,6 @@ def write_xlsx() -> None:
 	second.append(['人力', 5000])
 	second.append(['设备', 2000])
 	workbook.save(CORPUS / '数据' / '财务数据.xlsx')
-
 
 def main() -> None:
 	write_text_files()

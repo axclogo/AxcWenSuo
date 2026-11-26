@@ -1,8 +1,4 @@
-"""同义词（FR-632）：``<root>/synonyms.yaml``，格式为词组列表。
-
-对 NFKC 归一、转小写后的原始查询做子串匹配；命中组内任一词时，把组内其他词分词后并入关键词查询
-的词集。向量召回、``identifiers``、``missing_identifiers`` 只用原始查询。同义词文件变化不需要重建索引。
-"""
+"""Query synonym expansion. 查询同义词扩展。"""
 
 from __future__ import annotations
 
@@ -34,7 +30,6 @@ class Synonyms:
 					continue
 				tokens.extend(tokenizer.tokenize(term))
 		return tokens
-
 
 def load_synonyms(path: str | Path) -> Synonyms:
 	file_path = Path(path)

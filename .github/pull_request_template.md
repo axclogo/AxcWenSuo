@@ -5,7 +5,7 @@
 ## 检查清单
 
 - [ ] `uv run pytest` 全绿
-- [ ] `uv run ruff check .` 与 `uv run ruff format --check .` 通过
+- [ ] `uv run ruff check .` 通过
 - [ ] 新行为有测试，涉及需求条款的已注明编号
 - [ ] 更新了 CHANGELOG（行为变更/新功能）
 - [ ] 没有提交 `.wensuo/`、模型文件、私有评测数据

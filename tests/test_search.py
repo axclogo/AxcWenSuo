@@ -4,7 +4,7 @@ import datetime as dt
 import os
 
 import pytest
-from helpers import yaml_config
+from helpers import read, search, yaml_config
 
 from axc_wensuo.errors import ConfigError
 
@@ -15,28 +15,24 @@ USER_DOC = (
 
 
 def _search_hits(kb, query, **kwargs):
-	return kb.search(query, **kwargs).results
-
+	return search(kb, query, **kwargs).results
 
 def test_two_character_term_is_recalled(kb_factory):
 	kb = kb_factory({'海洋.md': WHALE})
 	assert _search_hits(kb, '鲸鱼')
 
-
 def test_identifier_and_split_identifier(kb_factory):
 	kb = kb_factory({'用户.md': USER_DOC})
 	assert _search_hits(kb, 'user_id')
-	result = kb.search('user')
+	result = search(kb, 'user')
 	assert result.results
 	assert result.identifiers == ['user']
 	assert _search_hits(kb, 'user')  # user_id 被拆成 user / id，user 也能命中
-
 
 def test_identifier_not_matching_longer_identifier(kb_factory):
 	kb = kb_factory({'用户.md': USER_DOC, '其他.md': '# 其他\n\n字段 user_idx 用于测试。\n'})
 	hits = _search_hits(kb, 'user_id')
 	assert hits[0].doc_id == '用户.md'
-
 
 def test_long_table_row_contains_header(kb_factory):
 	rows = '\n'.join(f'| {index:03d} | 设备{index} | 说明{index} |' for index in range(1, 121))
@@ -45,7 +41,6 @@ def test_long_table_row_contains_header(kb_factory):
 	hit = next(hit for hit in hits if '设备90' in hit.text)
 	assert hit.text.startswith('| 编号 | 名称 | 说明 |')
 	assert '设备90' in hit.text
-
 
 def test_filters_scope_path_tags_file_type_modified(kb_factory):
 	config = yaml_config(
@@ -86,7 +81,6 @@ def test_filters_scope_path_tags_file_type_modified(kb_factory):
 		'运维/部署.md',
 	}
 
-
 def test_path_prefix_is_raw_string_prefix(kb_factory):
 	kb = kb_factory(
 		{
@@ -99,7 +93,6 @@ def test_path_prefix_is_raw_string_prefix(kb_factory):
 		'财务/abc/y.md',
 	}
 
-
 def test_line_location_covers_hit(kb_factory):
 	text = '# 标题\n\n第一段无关。\n\n蓝色鲸鱼在深海游动。\n'
 	kb = kb_factory({'海洋.md': text})
@@ -109,16 +102,14 @@ def test_line_location_covers_hit(kb_factory):
 	segment = '\n'.join(lines[resolved.location.start - 1 : resolved.location.end])
 	assert '鲸鱼' in segment
 
-
 def test_title_path_matches_headings(kb_factory):
 	kb = kb_factory({'部署.md': '# 部署\n\n## 环境变量\n\n配置 `MAX_CONN` 后重启。\n'})
 	hit = _search_hits(kb, 'MAX_CONN')[0]
 	assert hit.title_path == ['部署', '环境变量']
 
-
 def test_missing_identifiers_and_gaps(kb_factory):
 	kb = kb_factory({'甲.md': '# 甲\n\n这里没有那个东西。\n'})
-	result = kb.search('zz_flag 字段')
+	result = search(kb, 'zz_flag 字段')
 	assert result.identifiers == ['zz_flag']
 	assert result.missing_identifiers == ['zz_flag']
 	assert result.results == []
@@ -128,33 +119,30 @@ def test_missing_identifiers_and_gaps(kb_factory):
 	assert gaps[0].missing_identifiers == ['zz_flag']
 	assert gaps[0].count == 1
 
-	result = kb.search('zz_flag 字段')
+	result = search(kb, 'zz_flag 字段')
 	assert result.missing_identifiers == ['zz_flag']
 	assert kb.gaps().gaps[0].count == 2
 
-	kb.search('zz_flag 字段', entry='mcp')
+	search(kb, 'zz_flag 字段', entry='mcp')
 	assert len(kb.gaps().gaps) == 2
 	assert {gap.entry for gap in kb.gaps().gaps} == {'api', 'mcp'}
 
 	kb.clear_gaps()
 	assert kb.gaps().gaps == []
 
-
 def test_gap_filters_canonical(kb_factory):
 	kb = kb_factory({'甲.md': '# 甲\n\n内容。\n'})
-	kb.search('nothing_here', scope=['甲'], tags=['x'])
-	kb.search('nothing_here', scope=['甲'], tags=['x'])
+	search(kb, 'nothing_here', scope=['甲'], tags=['x'])
+	search(kb, 'nothing_here', scope=['甲'], tags=['x'])
 	gaps = kb.gaps().gaps
 	assert len(gaps) == 1
 	assert gaps[0].filters == {'scope': ['甲'], 'tags': ['x']}
 	assert gaps[0].count == 2
 
-
 def test_min_score_requires_rerank(kb_factory):
 	kb = kb_factory({'甲.md': '# 甲\n\n内容。\n'})
 	with pytest.raises(ConfigError, match='min_score'):
-		kb.search('内容', min_score=0.5)
-
+		search(kb, '内容', min_score=0.5)
 
 def test_deterministic_results(kb_factory):
 	kb = kb_factory(
@@ -164,10 +152,9 @@ def test_deterministic_results(kb_factory):
 			'丙.md': '# 丙\n\n用户表索引。\n',
 		}
 	)
-	first = kb.search('用户表 user_id').to_dict()
+	first = search(kb, '用户表 user_id').to_dict()
 	for _ in range(100):
-		assert kb.search('用户表 user_id', sync=False).to_dict() == first
-
+		assert search(kb, '用户表 user_id', sync=False).to_dict() == first
 
 def test_max_per_doc(kb_factory):
 	sections = '\n\n'.join(f'## 小节{i}\n\n关键词贯穿整篇文档。' for i in range(8))
@@ -177,7 +164,6 @@ def test_max_per_doc(kb_factory):
 	for hit in hits:
 		per_doc[hit.doc_id] = per_doc.get(hit.doc_id, 0) + 1
 	assert per_doc['多段.md'] <= 3
-
 
 def test_identifier_layering_beats_lexical_score(kb_factory):
 	kb = kb_factory(
@@ -189,29 +175,26 @@ def test_identifier_layering_beats_lexical_score(kb_factory):
 	hits = _search_hits(kb, 'user_id', top_k=5)
 	assert hits[0].doc_id == '命中.md'
 
-
 def test_truncation(kb_factory):
 	long_paragraph = '长内容' * 300
 	kb = kb_factory({'长.md': '# 长\n\n' + long_paragraph + '\n'})
-	result = kb.search('长内容', max_chars=100)
+	result = search(kb, '长内容', max_chars=100)
 	hit = result.results[0]
 	assert len(hit.text) == 100
 	assert hit.truncated is True
 	assert result.score_kind == 'rank_only'
 	assert 'dense' not in hit.sources
 
-
 def test_query_validation(kb_factory):
 	kb = kb_factory({'甲.md': '# 甲\n\n内容。\n'})
 	with pytest.raises(ConfigError):
-		kb.search('a' * 1001)
+		search(kb, 'a' * 1001)
 	with pytest.raises(ConfigError, match='没有任何词'):
-		kb.search('!!!')
+		search(kb, '!!!')
 	with pytest.raises(ConfigError):
-		kb.search('内容', top_k=0)
+		search(kb, '内容', top_k=0)
 	with pytest.raises(ConfigError):
-		kb.search('内容', max_chars=0)
-
+		search(kb, '内容', max_chars=0)
 
 def test_show_and_read_api(kb_factory):
 	text = '# 部署\n\n## 变量\n\n配置 `MAX_CONN`。\n\n## 步骤\n\n第一步。\n'
@@ -222,17 +205,17 @@ def test_show_and_read_api(kb_factory):
 	assert detail.text == hit.text
 	assert kb.show('not-a-chunk') is None
 
-	result = kb.read('部署.md')
+	result = read(kb, '部署.md')
 	assert result is not None
 	assert result.text == text
 	assert result.next_offset is None
-	result = kb.read('部署.md', section='部署 > 变量')
+	result = read(kb, '部署.md', section='部署 > 变量')
 	assert result is not None
 	assert result.text.startswith('## 变量')
 	assert '第一步' not in result.text
-	slice_one = kb.read('部署.md', offset=0, max_chars=10)
+	slice_one = read(kb, '部署.md', offset=0, max_chars=10)
 	assert slice_one is not None
 	assert len(slice_one.text) == 10
 	assert slice_one.next_offset == 10
-	assert kb.read('不存在.md') is None
-	assert kb.read('部署.md', section='部署 > 不存在') is None
+	assert read(kb, '不存在.md') is None
+	assert read(kb, '部署.md', section='部署 > 不存在') is None

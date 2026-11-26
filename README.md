@@ -74,11 +74,15 @@ ws gaps
 ### Python API
 
 ```python
-from axc_wensuo import KnowledgeBase
+from axc_wensuo import Filters, KnowledgeBase, SearchOptions
 
 with KnowledgeBase('/path/to/docs') as kb:
 	report = kb.sync()  # SyncReport
 	result = kb.search('用户表的 user_id 字段', top_k=5, scope=['数据字典'])
+	advanced = kb.search(
+		'用户表',
+		options=SearchOptions(filters=Filters(tags=['数据库'], file_types=['md']), max_chars=400),
+	)
 	doc = kb.read('数据字典/用户.md', section='用户表 > 字段说明')
 	chunk = kb.show('3f2a9c0d1e4b5a67')
 	docs = kb.list_docs(scope=['数据字典'])
@@ -217,16 +221,15 @@ ws eval eval/queries.jsonl --modes lexical,fused --k 5
 ```bash
 uv sync --dev --extra mcp
 uv run ruff check .
-uv run ruff format --check .
 uv run pytest
 ```
 
-- 代码风格：Tab 缩进、单引号、行宽 120（ruff 配置见 [pyproject.toml](pyproject.toml)）。
+- 代码风格：Tab 缩进、单引号、行宽 120、方法/类之间 1 个空行（`ruff check` 见 [pyproject.toml](pyproject.toml)）。
 - 公开测试语料在 [tests/fixtures/corpus](tests/fixtures/corpus)，由 [tools/make_fixtures.py](tools/make_fixtures.py) 生成。
 - 非功能基准：[tools/bench.py](tools/bench.py)。
 - 模型导出：[tools/export_embedder.py](tools/export_embedder.py)。
 - 实现说明（索引结构、同步流程、检索流水线）见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-- 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，行为准则见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+- 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，开发红线见 [docs/CODE_POLICY.md](docs/CODE_POLICY.md)，行为准则见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
 
 ## 已知限制
 

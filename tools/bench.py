@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""非功能需求基准测试（需求第 10 节）。
-
-用固定随机种子生成语料与查询，测量查询延迟、首次建索引、无变化同步、改一个文件后的同步、命令行
-冷启动等指标。默认关闭向量（无需下载模型）；``--dense`` 需要先准备好默认向量模型。
-
-示例::
-
-	python tools/bench.py --chunks 2500 --queries 200 --threads 1
-	python tools/bench.py --sync-files 10000 --json
-"""
+"""Generate corpus and measure performance. 生成语料并测量性能。"""
 
 from __future__ import annotations
 
@@ -82,7 +73,6 @@ def write_corpus(root: Path, chunks: int, rng: random.Random) -> list[Path]:
 		files.append(path)
 	return files
 
-
 def make_queries(count: int, rng: random.Random) -> list[str]:
 	queries: list[str] = []
 	for index in range(count):
@@ -92,7 +82,6 @@ def make_queries(count: int, rng: random.Random) -> list[str]:
 			queries.append(f'{rng.choice(IDENTIFIERS)} {rng.choice(WORDS)}')
 	return queries
 
-
 def percentile(values: list[float], fraction: float) -> float:
 	ordered = sorted(values)
 	position = (len(ordered) - 1) * fraction
@@ -100,7 +89,6 @@ def percentile(values: list[float], fraction: float) -> float:
 	upper = min(lower + 1, len(ordered) - 1)
 	weight = position - lower
 	return ordered[lower] * (1 - weight) + ordered[upper] * weight
-
 
 def measure_queries(kb: KnowledgeBase, queries: list[str], warmup: int = 10) -> dict[str, float]:
 	for query in queries[:warmup]:
@@ -116,7 +104,6 @@ def measure_queries(kb: KnowledgeBase, queries: list[str], warmup: int = 10) -> 
 		'mean_ms': round(statistics.fmean(samples), 2),
 		'samples': len(samples),
 	}
-
 
 def measure_sync_10k(workdir: Path, rng: random.Random) -> dict[str, float]:
 	root = workdir / 'sync-bench'
@@ -139,15 +126,13 @@ def measure_sync_10k(workdir: Path, rng: random.Random) -> dict[str, float]:
 	shutil.rmtree(root, ignore_errors=True)
 	return {'max_ms': round(max(times), 2), 'p95_ms': round(percentile(times, 0.95), 2)}
 
-
 def cold_start(root: Path, query: str) -> float:
 	command = [sys.executable, '-m', 'axc_wensuo.cli', '--root', str(root), 'search', query]
 	started = time.perf_counter()
 	subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
 	return round((time.perf_counter() - started) * 1000, 2)
 
-
-def main() -> int:
+def _parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description='AxcWenSuo 基准测试')
 	parser.add_argument('--chunks', type=int, default=2500)
 	parser.add_argument('--queries', type=int, default=200)
@@ -157,8 +142,9 @@ def main() -> int:
 	parser.add_argument('--rerank-model-dir', default=None)
 	parser.add_argument('--sync-files', type=int, default=0, help='额外测量 N 个文件无变化同步（如 10000）')
 	parser.add_argument('--json', action='store_true')
-	args = parser.parse_args()
+	return parser.parse_args()
 
+def _run_benchmark(args: argparse.Namespace) -> dict[str, object]:
 	rng = random.Random(20261126)
 	workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix='wensuo-bench-'))
 	workdir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +156,6 @@ def main() -> int:
 	(root / 'wensuo.yaml').write_text(json.dumps(config), encoding='utf-8')
 	write_corpus(root, args.chunks, rng)
 	queries = make_queries(args.queries, rng)
-
 	report: dict[str, object] = {'chunks_target': args.chunks, 'queries': args.queries}
 	kb = KnowledgeBase(root)
 	try:
@@ -179,40 +164,41 @@ def main() -> int:
 		report['first_index_wall_seconds'] = round(time.perf_counter() - started, 3)
 		report['chunks_total'] = kb.store.count_chunks()
 		report['query_latency'] = measure_queries(kb, queries)
-
-		first_query = queries[0]
-		report['cold_start_ms'] = cold_start(root, first_query)
-
-		target = next(iter(sorted((root / '批次00').glob('*.md'))))
-		target.write_text(
-			target.read_text(encoding='utf-8') + '\n\n## 新增小节\n\n改一个文件后的同步测量。\n',
-			encoding='utf-8',
-		)
-		started = time.perf_counter()
-		kb.sync(threads=args.threads)
-		report['single_file_sync_ms'] = round((time.perf_counter() - started) * 1000, 2)
+		report['cold_start_ms'] = cold_start(root, queries[0])
+		report['single_file_sync_ms'] = _measure_single_file_sync(kb, root, args.threads)
 	finally:
 		kb.close()
-
 	if args.sync_files:
 		report['no_change_sync_10k'] = measure_sync_10k(workdir, rng)
+	shutil.rmtree(workdir, ignore_errors=True)
+	return report
 
-	try:
-		shutil.rmtree(workdir)
-	except OSError:
-		pass
+def _measure_single_file_sync(kb: KnowledgeBase, root: Path, threads: int) -> float:
+	target = next(iter(sorted((root / '批次00').glob('*.md'))))
+	target.write_text(
+		target.read_text(encoding='utf-8') + '\n\n## 新增小节\n\n改一个文件后的同步测量。\n',
+		encoding='utf-8',
+	)
+	started = time.perf_counter()
+	kb.sync(threads=threads)
+	return round((time.perf_counter() - started) * 1000, 2)
 
-	if args.json:
+def _print_report(report: dict[str, object], as_json: bool) -> None:
+	if as_json:
 		print(json.dumps(report, ensure_ascii=False, indent=2))
-	else:
-		print(f'语料段数: {report["chunks_total"]}')
-		print(f'首次建索引: {report["first_index_wall_seconds"]}s')
-		latency = report['query_latency']
-		print(f'查询延迟 p50/p95/mean: {latency["p50_ms"]} / {latency["p95_ms"]} / {latency["mean_ms"]} ms')
-		print(f'命令行冷启动: {report["cold_start_ms"]} ms')
-		print(f'改一个文件后同步: {report["single_file_sync_ms"]} ms')
-		if 'no_change_sync_10k' in report:
-			print(f'1 万文件无变化同步: {report["no_change_sync_10k"]}')
+		return
+	print(f'语料段数: {report["chunks_total"]}')
+	print(f'首次建索引: {report["first_index_wall_seconds"]}s')
+	latency = report['query_latency']
+	print(f'查询延迟 p50/p95/mean: {latency["p50_ms"]} / {latency["p95_ms"]} / {latency["mean_ms"]} ms')
+	print(f'命令行冷启动: {report["cold_start_ms"]} ms')
+	print(f'改一个文件后同步: {report["single_file_sync_ms"]} ms')
+	if 'no_change_sync_10k' in report:
+		print(f'1 万文件无变化同步: {report["no_change_sync_10k"]}')
+
+def main() -> int:
+	args = _parse_args()
+	_print_report(_run_benchmark(args), args.json)
 	return 0
 
 
