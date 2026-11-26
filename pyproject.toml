@@ -13,7 +13,7 @@ requires-python = ">=3.11"
 authors = [{ name = "axclogo", email = "axclogo@163.com" }]
 keywords = ["rag", "knowledge-base", "search", "bm25", "chinese", "mcp", "offline"]
 classifiers = [
-	"Development Status :: 2 - Pre-Alpha",
+	"Development Status :: 3 - Alpha",
 	"Intended Audience :: Developers",
 	"Natural Language :: Chinese (Simplified)",
 	"Operating System :: OS Independent",
@@ -40,10 +40,13 @@ ws = "axc_wensuo.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/axclogo/AxcWenSuo"
+Repository = "https://github.com/axclogo/AxcWenSuo"
+Documentation = "https://github.com/axclogo/AxcWenSuo/blob/main/docs/REQUIREMENTS.md"
+Changelog = "https://github.com/axclogo/AxcWenSuo/blob/main/CHANGELOG.md"
 Issues = "https://github.com/axclogo/AxcWenSuo/issues"
 
 [dependency-groups]
-dev = ["onnx>=1.16", "pytest>=8.0", "ruff>=0.6"]
+dev = ["onnx>=1.16", "pytest>=8.0", "ruff>=0.6", "mcp>=1.2"]
 
 [tool.hatch.version]
 path = "src/axc_wensuo/__init__.py"
@@ -53,9 +56,11 @@ packages = ["src/axc_wensuo"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 
 [tool.ruff]
 line-length = 120
+extend-exclude = ["docs", "tests/fixtures"]
 target-version = "py311"
 
 [tool.ruff.format]

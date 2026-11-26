@@ -1,0 +1,72 @@
+"""把解析结果变成可入库的段：切段、词频、标识符串。"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from axc_wensuo.chunker import chunk_document
+from axc_wensuo.models import Location
+from axc_wensuo.parsers.base import ParsedDocument
+from axc_wensuo.tokenizers import Tokenizer, extract_ident_runs
+
+
+@dataclass
+class IndexedChunk:
+	chunk_id: str
+	ordinal: int
+	text: str
+	index_text: str
+	title_path: list[str]
+	location: Location
+	dl: float
+	postings: list[tuple[str, int, int]] = field(default_factory=list)
+	ident_runs: list[str] = field(default_factory=list)
+	vec: bytes | None = None
+
+
+def build_chunks(
+	doc: ParsedDocument,
+	*,
+	scope: str,
+	max_chars: int,
+	min_chars: int,
+	title_weight: float,
+	tokenizer: Tokenizer,
+) -> list[IndexedChunk]:
+	aliases = '\n'.join(doc.aliases)
+	drafts = chunk_document(
+		doc,
+		scope=scope,
+		doc_title=doc.doc_title,
+		max_chars=max_chars,
+		min_chars=min_chars,
+	)
+	chunks: list[IndexedChunk] = []
+	for draft in drafts:
+		meta_text = f'{doc.doc_title}\n{aliases}\n{" > ".join(draft.title_path)}'
+		body_counts = tokenizer.counts(draft.text)
+		meta_counts = tokenizer.counts(meta_text)
+		postings: list[tuple[str, int, int]] = []
+		length = 0.0
+		for term, count in body_counts.items():
+			meta_count = meta_counts.get(term, 0)
+			postings.append((term, count, meta_count))
+			length += count + title_weight * meta_count
+		for term, meta_count in meta_counts.items():
+			if term not in body_counts:
+				postings.append((term, 0, meta_count))
+				length += title_weight * meta_count
+		chunks.append(
+			IndexedChunk(
+				chunk_id=draft.chunk_id,
+				ordinal=draft.ordinal,
+				text=draft.text,
+				index_text=draft.index_text,
+				title_path=list(draft.title_path),
+				location=draft.location,
+				dl=length,
+				postings=postings,
+				ident_runs=extract_ident_runs(draft.index_text),
+			)
+		)
+	return chunks

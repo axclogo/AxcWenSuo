@@ -1,0 +1,15 @@
+## 变更说明
+
+<!-- 做了什么、为什么、对应需求条款编号（FR-xxx / A-xx） -->
+
+## 检查清单
+
+- [ ] `uv run pytest` 全绿
+- [ ] `uv run ruff check .` 与 `uv run ruff format --check .` 通过
+- [ ] 新行为有测试，涉及需求条款的已注明编号
+- [ ] 更新了 CHANGELOG（行为变更/新功能）
+- [ ] 没有提交 `.wensuo/`、模型文件、私有评测数据
+
+## 性能影响（如有）
+
+<!-- 贴 tools/bench.py 前后对比 -->

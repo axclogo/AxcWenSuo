@@ -1,0 +1,48 @@
+name: 缺陷报告
+description: 报告一个可复现的问题
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。请先确认已阅读 README 与 docs/REQUIREMENTS.md，并搜索过已有 Issue。
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: 输出 `ws --version`
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      description: 操作系统、Python 版本、安装方式（uv/pip）、是否安装 docs/mcp 扩展
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 准备一个包含 …… 的目录
+        2. 执行 `ws search ……`
+        3. 看到 ……
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关输出
+      description: 请粘贴 `ws doctor`、错误输出或 JSON；注意脱敏。
+      render: shell
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
