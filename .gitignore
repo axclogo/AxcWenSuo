@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# 环境与工具
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 模型与索引（本地下载/派生物，不入库）
+models/
+*.onnx
+.wensuo/
+
+# 私有评测数据（基于自有文档库，不发布）
+eval/private/
+
+# 编辑器与系统
+.idea/
+.vscode/
+.DS_Store
