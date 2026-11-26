@@ -131,7 +131,7 @@ def write_text_files() -> None:
 	(CORPUS / '数据' / '设备台账.md').write_text(LONG_TABLE, encoding='utf-8')
 	(CORPUS / '运维' / '笔记.txt').write_bytes(NOTES.encode('gb18030'))
 	with (CORPUS / '数据' / '员工.csv').open('w', encoding='utf-8', newline='') as handle:
-		writer = csv.writer(handle)
+		writer = csv.writer(handle, lineterminator='\n')
 		writer.writerows(CSV_ROWS)
 	(CORPUS / '接口说明.html').write_text(HTML, encoding='utf-8')
 
