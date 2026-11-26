@@ -90,16 +90,17 @@ def test_short_chunks_merge_into_previous():
 def test_short_merge_respects_parent_scope():
 	text = '# A\n\n## B\n\n短一\n\n# C\n\n## D\n\n短二\n'
 	chunks = _chunks(text, max_chars=200, min_chars=50)
-	# 父章节路径不同（A vs C），不合并
-	assert [chunk.title_path for chunk in chunks] == [['A'], ['A', 'B'], ['C'], ['C', 'D']]
+	# Heading units join their first child; A and C never merge. 标题单元并入首个子章节；A 与 C 不合并。
+	assert [chunk.title_path for chunk in chunks] == [['A', 'B'], ['C', 'D']]
+	assert [chunk.text for chunk in chunks] == ['# A\n\n## B\n\n短一', '# C\n\n## D\n\n短二']
 
-def test_table_chunk_does_not_merge():
+def test_short_text_before_table_becomes_caption():
 	text = '# A\n\n短文字\n\n| x | y |\n| --- | --- |\n| 1 | 2 |\n'
 	chunks = _chunks(text, max_chars=500, min_chars=100)
-	table_chunks = [chunk for chunk in chunks if chunk.is_table]
-	assert len(table_chunks) == 1
-	assert table_chunks[0].title_path == ['A']
-	assert not table_chunks[0].text.startswith('短文字')
+	assert len(chunks) == 1
+	assert chunks[0].is_table
+	assert chunks[0].text == '# A\n\n短文字\n\n| x | y |\n| --- | --- |\n| 1 | 2 |'
+	assert chunks[0].location == Location(kind='lines', start=1, end=7)
 
 def test_chunk_ids_unique_for_duplicate_sections():
 	text = '# A\n\n## 重复\n\n同样内容\n\n## 重复\n\n同样内容\n'
@@ -150,3 +151,79 @@ def test_sheet_table_location():
 	)
 	chunks = chunk_document(doc, scope='x', doc_title='表', max_chars=1000, min_chars=1)
 	assert chunks[0].location == Location(kind='sheet', sheet='Sheet1', row_start=1, row_end=2)
+
+
+def test_empty_parent_heading_joins_first_child():
+	text = '# 用户表\n\n## 字段说明\n\n' + '字段内容。' * 30 + '\n\n## 枚举值\n\n' + '枚举内容。' * 30 + '\n'
+	chunks = _chunks(text, min_chars=80)
+	assert [chunk.title_path for chunk in chunks] == [['用户表', '字段说明'], ['用户表', '枚举值']]
+	assert chunks[0].text.startswith('# 用户表\n\n## 字段说明\n\n字段内容')
+	assert chunks[0].location.start == 1
+
+
+def test_long_parent_intro_stays_separate():
+	intro = '概述内容。' * 20
+	text = f'# 用户表\n\n{intro}\n\n## 字段说明\n\n' + '字段内容。' * 30 + '\n'
+	chunks = _chunks(text, min_chars=80)
+	assert [chunk.title_path for chunk in chunks] == [['用户表'], ['用户表', '字段说明']]
+
+
+def test_caption_and_header_repeat_in_every_table_chunk():
+	rows = '\n'.join(f'| {index} | 说明{index} |' for index in range(40))
+	text = f'## 枚举值\n\n**status 状态**：\n\n| 值 | 说明 |\n| --- | --- |\n{rows}\n'
+	chunks = _chunks(text, max_chars=200, min_chars=80)
+	assert len(chunks) > 1
+	assert chunks[0].text.startswith('## 枚举值\n\n**status 状态**：\n\n| 值 | 说明 |\n| --- | --- |\n| 0 |')
+	for chunk in chunks[1:]:
+		assert chunk.text.startswith('**status 状态**：\n\n| 值 | 说明 |\n| --- | --- |\n')
+		assert len(chunk.text) <= 200
+	assert chunks[0].location.start == 1
+	assert chunks[1].location.start > chunks[0].location.end
+
+
+def test_small_tables_in_one_section_merge():
+	text = (
+		'## 枚举值\n\n**a 甲**：\n\n| 值 | 说明 |\n| --- | --- |\n| 0 | 否 |\n\n'
+		'**b 乙**：\n\n| 值 | 说明 |\n| --- | --- |\n| 1 | 是 |\n'
+	)
+	chunks = _chunks(text, max_chars=1200, min_chars=80)
+	assert len(chunks) == 1
+	assert '**a 甲**' in chunks[0].text and '**b 乙**' in chunks[0].text
+
+
+def test_no_fragment_shorter_than_min_chars_when_neighbour_fits():
+	text = '# 标题\n\n## 一\n\n短。\n\n## 二\n\n' + '正文。' * 40 + '\n\n## 三\n\n尾。\n'
+	chunks = _chunks(text, max_chars=1200, min_chars=80)
+	assert all(len(chunk.text) >= 80 for chunk in chunks)
+
+
+def test_trailing_thematic_break_is_not_a_chunk():
+	text = '# A\n\n' + '内容。' * 40 + '\n\n---\n\n# B\n\n' + '内容。' * 40 + '\n'
+	chunks = _chunks(text, min_chars=80)
+	assert [chunk.title_path for chunk in chunks] == [['A'], ['B']]
+	assert not chunks[0].text.endswith('---')
+
+
+def test_short_heading_joins_first_piece_of_long_paragraph():
+	text = '## 标题\n\n' + '很长的句子。' * 60 + '\n'
+	chunks = _chunks(text, max_chars=120, min_chars=80)
+	assert chunks[0].text.startswith('## 标题\n\n很长的句子。')
+	assert all(len(chunk.text) <= 120 for chunk in chunks)
+
+
+def test_heading_keeps_trailing_hash():
+	chunks = _chunks('## C#\n\n内容\n\n## 结尾 ##\n\n内容\n')
+	assert [chunk.title_path for chunk in chunks] == [['C#'], ['结尾']]
+
+
+def test_short_tables_on_different_sheets_do_not_merge():
+	from axc_wensuo.parsers.base import Block, ParsedDocument, Table
+
+	blocks = []
+	for name in ('收入', '成本'):
+		table = Table(rows=[['科目', '金额'], ['人力', '1']], header_rows=1, sheet=name, row_start=2)
+		location = Location(kind='sheet', sheet=name, row_start=2, row_end=2)
+		blocks.append(Block(kind='table', start=0, end=0, text='', table=table, location=location))
+	doc = ParsedDocument(doc_id='a.xlsx', doc_title='表', text='', blocks=blocks)
+	chunks = chunk_document(doc, scope='x', doc_title='表', max_chars=1200, min_chars=80)
+	assert [chunk.location.sheet for chunk in chunks] == ['收入', '成本']

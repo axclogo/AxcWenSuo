@@ -9,7 +9,7 @@
 | --- | --- |
 | `config.py` | 全局配置与 `wensuo.yaml` 的加载、校验、合并（命令行 > 文件 > 默认值） |
 | `errors.py` | `ConfigError`（退出码 2）、`WenSuoRuntimeError`（退出码 3） |
-| `models.py` | 对外 dataclass；`to_dict()` 即第 8.3 节 JSON |
+| `models.py` | 对外 dataclass；`to_dict()` 即第 8.2 节 JSON |
 | `source.py` | 目录扫描、收纳规则、专题规则、变化检测、SHA-256 |
 | `parsers/` | Markdown / TXT / CSV-TSV、可选 Docling；产出带偏移的 `Block` |
 | `chunker.py` | 按标题分单元、装箱、拆分、表格、短段合并、`chunk_id` |
@@ -17,13 +17,13 @@
 | `lexical.py` | BM25 打分（倒排在 SQLite） |
 | `dense.py` | ONNX 编码、滑窗、float16 向量、暴力点积召回 |
 | `rerank.py` | ONNX 交叉编码器、校准、阈值 |
-| `search.py` | 过滤 → 双路召回 → 加权 RRF → 标识符分层 → 重排 → 限段 → top-k |
+| `search.py` | 过滤 → 双路召回 → 加权 RRF（含头名加分）→ 标识符分层 → 重排 → 限段 → top-k → 可选章节扩展 |
 | `synonyms.py` | 查询同义词扩展（只影响关键词一路） |
 | `store.py` | SQLite（WAL）、schema、文件锁、事务 |
 | `gaps.py` | 缺口清单记录与读取 |
 | `evaluate.py` | `ws eval` 指标 |
 | `kb.py` | `KnowledgeBase` 门面：同步、检索、阅读、诊断 |
-| `cli.py` / `mcp_server.py` | 入口层，不含检索逻辑 |
+| `cli.py` | 入口层，不含检索逻辑 |
 
 ## 索引目录
 
@@ -79,7 +79,7 @@
 
 1. 过滤条件转 SQL（`Filters.where()`），在召回前生效。
 2. 关键词 BM25 与向量点积各取 `candidates`（默认 50）。
-3. 加权 RRF：`Σ w_i / (60 + rank_i)`。
+3. 加权 RRF 加关键词头名加分：`Σ w_i / (20 + rank_i) + bonus`（FR-602）。
 4. 查询含标识符时按“段内命中的不同标识符个数”分层；层内按融合分排序。
 5. 配置了重排时取前 `rerank.top_k`，`p = sigmoid(logit / temperature + bias)`，
    `final = w × s_ret + (1 − w) × p`（`w` 按名次 0.75/0.60/0.40），丢弃 `p < min_score`。
@@ -94,12 +94,10 @@
 - 缺模型、配置错误、数据库写入失败、缓存损坏、Docling 模型资产缺失等一律直接上抛，不降级、不静默重试。
 - 允许的显式策略：索引目录文件锁的超时/重试、解析失败缓存（哈希 + 解析器版本不变才不重试）、
   向量缓存（文本哈希 + 模型身份）。这些策略都有明确的用户可见语义，不掩盖错误。
-- MCP 工具把 `WenSuoError` 转成 JSON 错误对象（FR-1013）；不是吞错。
 
 ## 线程与并发
 
-- 一个 `KnowledgeBase` 对应一个线程（文档明示）；MCP 工具声明为 `async`，在事件循环线程内执行，
-  与创建连接同线程。
+- 一个 `KnowledgeBase` 对应一个线程（文档明示）。
 - 写操作由索引目录下的 `lock` 文件串行化：自动同步不等待，拿不到锁返回 `stale: true`；
   `ws sync` 最多等待 60 秒。
 - 数据库初始化对短暂的锁冲突做有限重试；WAL 允许读写并行。

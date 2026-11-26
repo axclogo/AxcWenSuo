@@ -17,7 +17,7 @@ body:
     id: environment
     attributes:
       label: 环境
-      description: 操作系统、Python 版本、安装方式（uv/pip）、是否安装 docs/mcp 扩展
+      description: 操作系统、Python 版本、安装方式（uv/pip）、是否安装 docs 扩展
     validations:
       required: true
   - type: textarea

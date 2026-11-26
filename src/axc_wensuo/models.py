@@ -96,6 +96,7 @@ class SearchHit:
 	sources: dict[str, float]
 	text: str
 	truncated: bool = False
+	expanded: bool = False
 
 	def to_dict(self) -> dict[str, Any]:
 		return {
@@ -110,6 +111,7 @@ class SearchHit:
 			'sources': {key: value for key, value in self.sources.items()},
 			'text': self.text,
 			'truncated': self.truncated,
+			'expanded': self.expanded,
 		}
 
 @dataclass
@@ -146,8 +148,9 @@ class ChunkDetail:
 	text: str
 
 	def to_dict(self) -> dict[str, Any]:
+		# No query, so no rank; score and sources are empty. 没有查询，因此没有 rank；score 与 sources 为空。
 		return {
-			'rank': 1,
+			'schema_version': SCHEMA_VERSION,
 			'chunk_id': self.chunk_id,
 			'doc_id': self.doc_id,
 			'doc_title': self.doc_title,
@@ -155,8 +158,11 @@ class ChunkDetail:
 			'title_path': list(self.title_path),
 			'location': self.location.to_dict(),
 			'ordinal': self.ordinal,
+			'score': None,
+			'sources': {},
 			'text': self.text,
 			'truncated': False,
+			'expanded': False,
 		}
 
 @dataclass

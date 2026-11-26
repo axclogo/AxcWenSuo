@@ -92,3 +92,11 @@ def test_jieba_missing(monkeypatch):
 	monkeypatch.setattr(tokenizers_module.importlib.util, 'find_spec', lambda name: None if name == 'jieba' else True)
 	with pytest.raises(WenSuoRuntimeError, match='jieba'):
 		get_tokenizer('jieba')
+
+
+def test_question_words_are_blanked_before_tokenizing():
+	from axc_wensuo.tokenizers import strip_question_words, tokenize_cjk_bigram
+
+	assert tokenize_cjk_bigram(strip_question_words('权限怎么排查')) == ['权', '限', '权限', '排', '查', '排查']
+	assert strip_question_words('为什么失败') == ' 失败'
+	assert strip_question_words('部署步骤') == '部署步骤'

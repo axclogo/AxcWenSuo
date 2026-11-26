@@ -12,6 +12,7 @@ from axc_wensuo.parsers.base import (
 	clean_heading,
 	document_title,
 	find_section,
+	heading_title,
 	normalize_meta_list,
 	render_table,
 )
@@ -48,7 +49,10 @@ def parser_version_for(extension: str) -> str:
 def parse_file(path: str | Path, doc_id: str, *, index_dir: str | Path | None = None) -> ParsedDocument:
 	file_path = Path(path)
 	suffix = file_path.suffix.lower()
-	data = file_path.read_bytes()
+	try:
+		data = file_path.read_bytes()
+	except OSError as exc:
+		raise ParseError(f'无法读取文件：{exc}') from exc
 	if suffix in DOCS_EXTENSIONS:
 		if index_dir is None:
 			raise ParseError('解析该格式需要索引目录（用于解析缓存）')
@@ -76,6 +80,7 @@ __all__ = [
 	'docs_extra_available',
 	'document_title',
 	'find_section',
+	'heading_title',
 	'normalize_meta_list',
 	'parse_file',
 	'remove_parsed_cache',

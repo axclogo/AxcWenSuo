@@ -39,16 +39,14 @@
 
 ## 4. 本项目中的具体解释
 
-- `KnowledgeBase` 是引擎入口；`cli.py` / `mcp_server.py` 只做参数解析与输出格式化。
+- `KnowledgeBase` 是引擎入口；`cli.py` 只做参数解析与输出格式化。
 - 模型目录、索引目录、知识库根目录都来自显式配置；缺失即抛 `WenSuoRuntimeError`，不自动下载、不换模型。
-- MCP 工具错误按需求以 JSON 错误对象返回（FR-1013），不吞掉错误。
-- MCP `search` 的 9 个参数由需求 FR-1012 固定，是本规范“参数 ≤ 5”的唯一例外，新增参数前先改需求。
 - Docling 解析缓存损坏、索引结构版本不兼容都直接报错，并提示明确的修复动作。
 
 ## 5. 校验
 
 ```bash
-uv sync --dev --extra mcp
+uv sync --dev
 uv run pytest
 uv run ruff check .
 ```

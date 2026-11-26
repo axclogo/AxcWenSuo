@@ -61,6 +61,7 @@ class SearchOptions:
 	sync: bool = True
 	entry: str = 'api'
 	mode: str | None = None
+	expand_section: bool = False
 
 @dataclass(frozen=True)
 class ReadOptions:
@@ -103,7 +104,7 @@ def _runtime_errors(method):
 	def wrapper(*args, **kwargs):
 		try:
 			return method(*args, **kwargs)
-		except (OSError, sqlite3.Error) as exc:
+		except (OSError, sqlite3.Error, ParseError) as exc:
 			raise WenSuoRuntimeError(f'{type(exc).__name__}: {exc}') from exc
 	return wrapper
 
@@ -202,9 +203,11 @@ class KnowledgeBase:
 		started = time.monotonic()
 		scan_result = scan(self.root, config)
 		docs = self.store.all_docs()
-		deleted = sorted(set(docs) - set(scan_result.by_id()))
+		present = set(scan_result.by_id())
+		deleted = sorted(set(docs) - present)
 		report = SyncReport(deleted=deleted, skipped=[item.doc_id for item in scan_result.skipped])
-		self._delete_documents(deleted, docs, config)
+		self._delete_documents(deleted, docs)
+		self._drop_stale_failures(present)
 		chunk_signature = self._chunk_signature(config)
 		dense_identity, force_all = self._reindex_plan(config, chunk_signature)
 		jobs = self._collect_jobs(scan_result.files, docs, force_all)
@@ -221,6 +224,7 @@ class KnowledgeBase:
 			'min_chars': config.chunk.min_chars,
 			'tokenizer': self.tokenizer.signature,
 			'title_weight': config.lexical.title_weight,
+			'scope_rules': [[rule.glob, rule.scope] for rule in config.scope_rules],
 		}
 		return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -235,14 +239,22 @@ class KnowledgeBase:
 					self.store.prune_vector_cache(dense_identity)
 		return dense_identity, force_rechunk or vector_reset
 
-	def _delete_documents(self, deleted: list[str], docs: dict[str, dict], config: Config) -> None:
+	def _delete_documents(self, deleted: list[str], docs: dict[str, dict]) -> None:
 		if not deleted:
 			return
 		with self.store.transaction():
 			for doc_id in deleted:
 				self.store.delete_document(doc_id)
 		for doc_id in deleted:
-			remove_parsed_cache(config.index_dir, docs[doc_id]['sha256'], docs[doc_id]['parser'])
+			self._release_parsed_cache(docs[doc_id])
+
+	def _drop_stale_failures(self, present: set[str]) -> None:
+		"""Forget failures of files that are gone or excluded (FR-203). 删除已不存在或被排除文件的失败记录。"""
+		stale = sorted(self.store.failure_ids() - present)
+		if stale:
+			with self.store.transaction():
+				for doc_id in stale:
+					self.store.delete_failure(doc_id)
 
 	def _collect_jobs(self, files: list[FileEntry], docs: dict[str, dict], force_all: bool) -> list[FileEntry]:
 		jobs: list[FileEntry] = []
@@ -253,7 +265,7 @@ class KnowledgeBase:
 				continue
 			if not stat_changed(entry, doc):
 				continue
-			if file_sha256(entry.path) == doc['sha256']:
+			if self._same_content(entry, doc['sha256']):
 				with self.store.transaction():
 					self.store.update_doc_stat(entry.doc_id, entry.size, entry.mtime_ns, entry.mtime_ns / 1e9)
 				continue
@@ -271,6 +283,13 @@ class KnowledgeBase:
 			if state.progress is not None:
 				state.progress(done, total)
 
+	def _same_content(self, entry: FileEntry, sha256: str) -> bool:
+		"""Compare the content hash; unreadable files count as changed. 比较内容哈希；读不了的文件按已变化处理。"""
+		try:
+			return file_sha256(entry.path) == sha256
+		except OSError:
+			return False
+
 	def _index_one(self, entry: FileEntry, doc: dict | None, state: _SyncState) -> None:
 		if self._failure_cached(entry):
 			state.report.failed.append(entry.doc_id)
@@ -281,20 +300,39 @@ class KnowledgeBase:
 			logger.warning('解析失败：%s：%s', entry.doc_id, exc)
 			self._record_failure(entry, exc)
 			state.report.failed.append(entry.doc_id)
-			return
-		(state.report.added if doc is None else state.report.modified).append(entry.doc_id)
+		else:
+			(state.report.added if doc is None else state.report.modified).append(entry.doc_id)
+		if doc is not None:
+			self._release_parsed_cache(doc)
+
+	def _release_parsed_cache(self, old: dict) -> None:
+		"""Drop a parse cache no document uses any more. 删除不再被任何文档使用的解析缓存。"""
+		if not self.store.parsed_cache_in_use(old['sha256'], old['parser']):
+			remove_parsed_cache(self.config.index_dir, old['sha256'], old['parser'])
 
 	def _failure_cached(self, entry: FileEntry) -> bool:
+		"""Is the failure still valid? Stat first, then hash. 失败记录是否仍有效：先比大小与时间，再比哈希。"""
 		failure = self.store.get_failure(entry.doc_id)
-		if failure is None or failure['parser_version'] != parser_version_for(entry.path.suffix):
+		version = parser_version_for(entry.path.suffix)
+		if failure is None or not failure['sha256'] or failure['parser_version'] != version:
 			return False
-		return file_sha256(entry.path) == failure['sha256']
+		if (entry.size, entry.mtime_ns) == (failure['size'], failure['mtime_ns']):
+			return True
+		if not self._same_content(entry, failure['sha256']):
+			return False
+		with self.store.transaction():
+			self.store.update_failure_stat(entry.doc_id, entry.size, entry.mtime_ns)
+		return True
 
 	def _record_failure(self, entry: FileEntry, exc: ParseError) -> None:
+		try:
+			digest = file_sha256(entry.path)
+		except OSError:
+			digest = ''  # Unreadable: always retried. 读不了的文件每次同步都重试。
 		record = FailureRecord(
 			doc_id=entry.doc_id,
 			reason=str(exc),
-			sha256=file_sha256(entry.path),
+			sha256=digest,
 			parser_version=parser_version_for(entry.path.suffix),
 			size=entry.size,
 			mtime_ns=entry.mtime_ns,
@@ -434,7 +472,9 @@ class KnowledgeBase:
 		opts = options or SearchOptions()
 		filters = replace(opts.filters, scope=tuple(scope)) if scope else opts.filters
 		stale = self._auto_sync() if opts.sync else False
-		request = SearchRequest(query, top_k, filters.normalized(), opts.min_score, opts.max_chars, opts.mode, stale)
+		request = SearchRequest(
+			query, top_k, filters.normalized(), opts.min_score, opts.max_chars, opts.mode, stale, opts.expand_section
+		)
 		result = self._engine(opts.mode).search(request)
 		if opts.entry != 'eval' and should_record(
 			result_count=len(result.results), missing_identifiers=result.missing_identifiers
@@ -599,6 +639,8 @@ class KnowledgeBase:
 
 	@_runtime_errors
 	def gaps(self, *, limit: int = 50) -> GapsResult:
+		if limit <= 0:
+			raise ConfigError('limit 必须是正整数')
 		return list_gaps_impl(self.store, limit)
 
 	@_runtime_errors
@@ -632,14 +674,10 @@ def _model_file_signature(model_dir: Path) -> tuple[int, int] | None:
 		return None
 	return (stat.st_mtime_ns, stat.st_size)
 
-def open_knowledge_base(root: str | Path | None = None, *, kb: str | None = None) -> KnowledgeBase:
-	return KnowledgeBase(resolve_root(str(root) if root else None, kb))
-
 
 __all__ = [
 	'KnowledgeBase',
 	'ListDocsOptions',
 	'ReadOptions',
 	'SearchOptions',
-	'open_knowledge_base',
 ]

@@ -11,7 +11,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{ name = "axclogo", email = "axclogo@163.com" }]
-keywords = ["rag", "knowledge-base", "search", "bm25", "chinese", "mcp", "offline"]
+keywords = ["rag", "knowledge-base", "search", "bm25", "chinese", "offline"]
 classifiers = [
 	"Development Status :: 3 - Alpha",
 	"Intended Audience :: Developers",
@@ -33,7 +33,6 @@ dependencies = [
 
 [project.optional-dependencies]
 docs = ["docling>=2.153,<3"]
-mcp = ["mcp>=2.3,<3"]
 
 [project.scripts]
 ws = "axc_wensuo.cli:main"
@@ -46,7 +45,7 @@ Changelog = "https://github.com/axclogo/AxcWenSuo/blob/main/CHANGELOG.md"
 Issues = "https://github.com/axclogo/AxcWenSuo/issues"
 
 [dependency-groups]
-dev = ["onnx>=1.16", "pytest>=8.0", "ruff>=0.6", "mcp>=2.3,<3"]
+dev = ["onnx>=1.16", "pytest>=8.0", "ruff>=0.6"]
 
 [tool.hatch.version]
 path = "src/axc_wensuo/__init__.py"

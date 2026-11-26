@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from axc_wensuo.config import Config
-from axc_wensuo.errors import WenSuoRuntimeError
 from axc_wensuo.models import ScopeRule
 from axc_wensuo.parsers import DOCS_EXTENSIONS, SUPPORTED_EXTENSIONS, docs_extra_available
 
@@ -78,7 +77,8 @@ def scan(root: str | Path, config: Config) -> ScanResult:
 			try:
 				stat = path.stat()
 			except OSError as exc:
-				raise WenSuoRuntimeError(f'无法读取文件信息：{doc_id}：{exc}') from exc
+				skipped.append(SkippedFile(doc_id, f'无法读取文件信息：{exc}'))
+				continue
 			if stat.st_size > max_bytes:
 				skipped.append(SkippedFile(doc_id, f'超过 max_file_mb（{config.max_file_mb} MB）'))
 				continue

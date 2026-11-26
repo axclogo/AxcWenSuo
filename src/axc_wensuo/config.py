@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 from dataclasses import dataclass, field, replace
@@ -29,7 +30,7 @@ class LexicalConfig:
 	tokenizer: str = 'cjk_bigram'
 	title_weight: float = 2.0
 	k1: float = 1.2
-	b: float = 0.75
+	b: float = 0.5
 
 @dataclass(frozen=True)
 class DenseConfig:
@@ -39,7 +40,7 @@ class DenseConfig:
 @dataclass(frozen=True)
 class FusionConfig:
 	w_lexical: float = 1.0
-	w_dense: float = 0.5
+	w_dense: float = 0.25
 	candidates: int = 50
 	max_per_doc: int = 3
 
@@ -351,7 +352,7 @@ def _get_lexical(value: Any, path: str, key: str) -> LexicalConfig:
 	k1 = _number(data.get('k1', 1.2), f'{where}.k1')
 	if k1 <= 0:
 		raise ConfigError(f'{where}.k1 必须 > 0')
-	b = _number(data.get('b', 0.75), f'{where}.b')
+	b = _number(data.get('b', LexicalConfig.b), f'{where}.b')
 	if not 0 <= b <= 1:
 		raise ConfigError(f'{where}.b 必须在 [0, 1] 内')
 	return LexicalConfig(tokenizer=str(tokenizer), title_weight=title_weight, k1=k1, b=b)
@@ -373,7 +374,7 @@ def _get_fusion(value: Any, path: str, key: str) -> FusionConfig:
 	data = _require_mapping(value, where)
 	_validate_unknown(data, {'w_lexical', 'w_dense', 'candidates', 'max_per_doc'}, where)
 	w_lexical = _number(data.get('w_lexical', 1.0), f'{where}.w_lexical')
-	w_dense = _number(data.get('w_dense', 0.5), f'{where}.w_dense')
+	w_dense = _number(data.get('w_dense', FusionConfig.w_dense), f'{where}.w_dense')
 	if w_lexical < 0 or w_dense < 0:
 		raise ConfigError(f'{where}: w_lexical 和 w_dense 必须 ≥ 0')
 	if w_lexical + w_dense <= 0:
@@ -407,6 +408,6 @@ def _get_rerank(value: Any, path: str, key: str) -> RerankConfig:
 	return RerankConfig(model_dir=model_dir.resolve() if model_dir else None, top_k=top_k, min_score=min_score)
 
 def _number(value: Any, where: str) -> float:
-	if isinstance(value, bool) or not isinstance(value, (int, float)):
-		raise ConfigError(f'{where} 必须是数字')
+	if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+		raise ConfigError(f'{where} 必须是有限数字')
 	return float(value)

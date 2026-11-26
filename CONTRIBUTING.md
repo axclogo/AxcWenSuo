@@ -12,8 +12,8 @@
 ## 开发环境
 
 ```bash
-uv sync --dev --extra mcp   # 核心 + 测试 + MCP
-uv sync --dev --extra docs --extra mcp   # 需要解析 PDF/Office 时再加 docs
+uv sync --dev   # 核心 + 测试
+uv sync --dev --extra docs   # 需要解析 PDF/Office 时再加 docs
 uv run ws --version
 uv run pytest
 ```
@@ -24,7 +24,7 @@ uv run pytest
 
 - Tab 缩进、单引号、行宽 120、方法/类之间 1 个空行；`ruff` 规则 `E, F, I, B, UP`。
 - 中文注释与文档字符串为主，标识符、命令、JSON 字段用英文。
-- 库优先：检索、同步等能力先写在 `KnowledgeBase` / 各模块里；`cli.py` 与 `mcp_server.py` 只做参数解析和输出格式化。
+- 库优先：检索、同步等能力先写在 `KnowledgeBase` / 各模块里；`cli.py` 只做参数解析和输出格式化。
 - 显式失败：缺模型、缺可选依赖、配置非法时报错并给出修复方法，不静默回退。
 - 确定性：同一文档、同一配置、同一模型的检索顺序必须一致；分数相同时按 `chunk_id` 升序。
 
@@ -81,6 +81,3 @@ uv run pytest
 - 功能缺陷与需求讨论用 GitHub Issues（模板见 `.github/ISSUE_TEMPLATE/`）。
 - 安全问题请按 [SECURITY.md](SECURITY.md) 私下报告，不要开公开 Issue。
 
-## 行为准则
-
-参与本项目即表示同意遵守 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。

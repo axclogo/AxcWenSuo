@@ -18,7 +18,7 @@ jobs:
         with:
           enable-cache: true
       - name: Sync dependencies
-        run: uv sync --dev --extra mcp
+        run: uv sync --dev
       - name: Ruff check
         run: uv run ruff check .
 
@@ -37,6 +37,6 @@ jobs:
           enable-cache: true
           python-version: ${{ matrix.python }}
       - name: Sync dependencies
-        run: uv sync --dev --extra mcp
+        run: uv sync --dev
       - name: Run tests
         run: uv run pytest -q

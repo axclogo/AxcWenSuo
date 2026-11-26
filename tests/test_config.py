@@ -27,7 +27,9 @@ def test_defaults(tmp_path):
 	assert config.dense.enabled is True
 	assert config.dense.model == 'bge-small-zh-v1.5'
 	assert config.fusion.w_lexical == 1.0
-	assert config.fusion.w_dense == 0.5
+	assert config.fusion.w_dense == 0.25
+	assert config.lexical.k1 == 1.2
+	assert config.lexical.b == 0.5
 	assert config.fusion.candidates == 50
 	assert config.fusion.max_per_doc == 3
 	assert config.rerank.model_dir is None
@@ -136,4 +138,22 @@ def test_bool_is_not_int(tmp_path):
 	root = _root(tmp_path)
 	(root / 'wensuo.yaml').write_text('threads: true\n', encoding='utf-8')
 	with pytest.raises(ConfigError):
+		load_config(root)
+
+
+@pytest.mark.parametrize(
+	'body',
+	[
+		'lexical: {title_weight: .nan}\n',
+		'lexical: {k1: .inf}\n',
+		'lexical: {b: .nan}\n',
+		'fusion: {w_dense: .inf}\n',
+		'fusion: {w_lexical: .nan}\n',
+		'rerank: {min_score: .nan}\n',
+	],
+)
+def test_non_finite_numbers_rejected(tmp_path, body):
+	root = _root(tmp_path)
+	(root / 'wensuo.yaml').write_text(body, encoding='utf-8')
+	with pytest.raises(ConfigError, match='有限数字'):
 		load_config(root)

@@ -5,6 +5,31 @@
 
 ## [Unreleased]
 
+按 `docs/REQUIREMENTS.md` v1.1。
+
+### Changed
+- 切段版本 2（FR-401~406）：空标题单元并入首个子章节；表格前的短说明作为表格标题随表头重复；表格段参与短段合并；
+  不跨工作表合并。私有语料上短于 80 字的段从 1,336 降到 8。
+- 检索默认参数：BM25 `b=0.5`、RRF 常数 20、`w_dense=0.25`，新增关键词头名加分（FR-602，借鉴 qmd）。
+- 关键词召回前去掉查询里的疑问词（FR-504），避免索引类文档靠“怎么”“哪些”排到第一。
+- `show` JSON 去掉 `rank`，增加 `schema_version`、`score`、`sources`；结果元素增加 `expanded`。
+- `path_prefix` 区分大小写；`missing_identifiers` 按第 4 节子串加边界判断。
+
+### Added
+- `--expand-section` / `SearchOptions(expand_section=True)`：结果扩展为命中段所在章节（FR-605，借鉴 haiku.rag）。
+- `tools/export_embedder.py` 导出后校验 opset、单文件、可加载、输出名与形状。
+
+### Removed
+- MCP 服务（`ws mcp`、`mcp` 扩展）；需要的调用方基于 Python API 自行封装。
+- 未使用的 `open_knowledge_base`。
+
+### Fixed
+- 开启向量时任何过滤条件都报 `no such column: c.scope`。
+- 坏符号链接、无读权限文件、超长 CSV 单元格导致整次同步失败；现在记为跳过或解析失败，其余文件照常同步。
+- 修改 `scope_rules` 后专题不更新；删除或排除的文件失败记录残留；解析失败文件每次重算哈希。
+- DOCX 标题级别被抬高；`## C#` 标题被截成 `C`；单列管道表格不识别；多行 CSV 记录起始行号错误；
+  配置接受 NaN/Infinity；`ws gaps --limit` 不校验；Docling 缓存残留；向量末窗口重复计数。
+
 ## [0.1.0] - 2026-11-26
 
 首个 Alpha 版本：按 `docs/REQUIREMENTS.md` v1.0 一次性交付。

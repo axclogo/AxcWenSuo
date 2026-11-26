@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
-from helpers import make_embedder_dir, search, write, yaml_config
+from helpers import make_embedder_dir, run_cli, search, search_options, write, yaml_config
 
 from axc_wensuo.errors import WenSuoRuntimeError
 
@@ -161,3 +162,60 @@ def test_vector_cache_reused_across_documents(kb_factory, tmp_path, monkeypatch)
 	assert recorded == []
 	hits = search(kb, '苹果', sync=False).results
 	assert any(hit.doc_id == '副本/苹果副本.md' for hit in hits)
+
+
+def _filtered_kb(kb_factory, tmp_path):
+	docs = {
+		'水果/苹果.md': '---\ntags: [红]\n---\n# 苹果\n\n苹果是一种水果。\n',
+		'水果/香蕉.txt': '香蕉也是水果。\n',
+		'Fruit/梨.md': '# 梨\n\n梨是水果。\n',
+	}
+	model_dir = tmp_path / 'models' / 'bge-small-zh-v1.5'
+	make_embedder_dir(model_dir, [path + text for path, text in docs.items()] + ['水果'])
+	config = yaml_config(dense={'enabled': True}, models_dir=str(tmp_path / 'models'))
+	return kb_factory(docs, config=config)
+
+
+@pytest.mark.parametrize(
+	('filters', 'expected'),
+	[
+		({'scope': ('水果',)}, {'水果/苹果.md', '水果/香蕉.txt'}),
+		({'path_prefix': 'Fruit/'}, {'Fruit/梨.md'}),
+		({'path_prefix': 'fruit/'}, set()),
+		({'tags': ('红',)}, {'水果/苹果.md'}),
+		({'file_types': ('.txt',)}, {'水果/香蕉.txt'}),
+		({'modified_after': dt.date(2000, 1, 1)}, {'水果/苹果.md', '水果/香蕉.txt', 'Fruit/梨.md'}),
+		({'modified_after': dt.date(2999, 1, 1)}, set()),
+	],
+)
+def test_dense_recall_with_each_filter(kb_factory, tmp_path, filters, expected):
+	kb = _filtered_kb(kb_factory, tmp_path)
+	kb.sync()
+	for mode in ('dense', 'fused'):
+		options = search_options(sync=False, mode=mode, **filters)
+		result = kb.search('水果', top_k=10, options=options)
+		assert {hit.doc_id for hit in result.results} == expected
+		if expected and mode == 'dense':
+			assert all('dense' in hit.sources for hit in result.results)
+
+
+def test_cli_search_with_filter_and_dense_enabled(kb_factory, tmp_path):
+	kb = _filtered_kb(kb_factory, tmp_path)
+	kb.sync()
+	result = run_cli(kb.root, 'search', '水果', '--scope', '水果', '--format', 'json')
+	assert result.returncode == 0, result.stderr
+	hits = json.loads(result.stdout)['results']
+	assert {hit['doc_id'] for hit in hits} == {'水果/苹果.md', '水果/香蕉.txt'}
+	assert any('dense' in hit['sources'] for hit in hits)
+
+
+@pytest.mark.parametrize('length', [511, 600, 832, 833, 1216, 1217, 5000])
+def test_last_window_is_not_inside_previous_window(length):
+	from axc_wensuo.dense import WINDOW_STEP, WINDOW_TOKENS, _window_starts
+
+	starts = _window_starts(length)
+	assert starts[0] == 0
+	assert all(later - earlier == WINDOW_STEP for earlier, later in zip(starts, starts[1:], strict=False))
+	assert starts[-1] + WINDOW_TOKENS >= length
+	# Every window must add tokens the previous one did not cover. 每个窗口都必须覆盖前一窗口之外的内容。
+	assert all(earlier + WINDOW_TOKENS < length for earlier in starts[:-1])

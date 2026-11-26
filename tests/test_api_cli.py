@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import socket
-import sys
 
 import pytest
 from helpers import run_cli, search, write
@@ -82,6 +80,7 @@ def test_cli_json_structure(kb_factory):
 		'sources',
 		'text',
 		'truncated',
+		'expanded',
 	}
 	assert hit['location']['kind'] == 'lines'
 	assert hit['sources']['lexical'] >= 1
@@ -149,38 +148,6 @@ def test_python_api_matches_cli_json(kb_factory):
 	cli.pop('stale')
 	assert api == cli
 
-def test_mcp_matches_cli_json(kb_factory):
-	pytest.importorskip('mcp')
-	from mcp import ClientSession, StdioServerParameters
-	from mcp.client.stdio import stdio_client
-
-	kb = kb_factory({'甲.md': DOC})
-	kb.sync()
-	cli = json.loads(run_cli(kb.root, 'search', '鲸鱼', '--format', 'json', '--no-sync').stdout)
-	cli.pop('stale')
-
-	async def call():
-		params = StdioServerParameters(
-			command=sys.executable,
-			args=['-m', 'axc_wensuo.cli', '--root', str(kb.root), 'mcp'],
-		)
-		async with stdio_client(params) as (read, write_stream):
-			async with ClientSession(read, write_stream) as session:
-				await session.initialize()
-				tools = await session.list_tools()
-				result = await session.call_tool('search', {'query': '鲸鱼'})
-				return tools, result
-
-	tools, result = asyncio.run(call())
-	names = [tool.name for tool in tools.tools]
-	assert names == ['search', 'read', 'list_docs', 'list_scopes']
-	search_tool = next(tool for tool in tools.tools if tool.name == 'search')
-	assert 'score_kind' in search_tool.description
-	assert 'missing_identifiers' in search_tool.description
-	assert '_root' in search_tool.description
-	payload = json.loads(result.content[0].text)
-	payload.pop('stale')
-	assert payload == cli
 
 def test_offline_search_does_not_open_socket(kb_factory, monkeypatch):
 	kb = kb_factory({'甲.md': DOC})
@@ -207,20 +174,6 @@ def test_cli_sync_text_report_goes_to_stderr(kb_factory):
 	assert result.stdout == ''
 	assert '新增 1' in result.stderr
 
-def test_mcp_server_exits_when_client_disconnects(kb_factory):
-	pytest.importorskip('mcp')
-	import subprocess
-
-	kb = kb_factory({'甲.md': DOC})
-	process = subprocess.Popen(
-		[sys.executable, '-m', 'axc_wensuo.cli', '--root', str(kb.root), 'mcp'],
-		stdin=subprocess.PIPE,
-		stdout=subprocess.PIPE,
-		stderr=subprocess.PIPE,
-	)
-	assert process.stdin is not None
-	process.stdin.close()
-	assert process.wait(timeout=30) == 0
 
 def test_cli_argparse_error_json(kb_factory):
 	kb = kb_factory({'甲.md': DOC})
@@ -248,3 +201,30 @@ def test_corrupt_index_is_runtime_error(kb_factory):
 	result = run_cli(kb.root, 'search', '鲸鱼')
 	assert result.returncode == 3
 	assert '无法打开索引' in result.stderr
+
+
+def test_show_json_matches_result_element(kb_factory):
+	kb = kb_factory({'甲.md': DOC})
+	hit = search(kb, '鲸鱼').results[0].to_dict()
+	result = run_cli(kb.root, 'show', hit['chunk_id'], '--format', 'json')
+	assert result.returncode == 0
+	shown = json.loads(result.stdout)
+	assert 'rank' not in shown
+	assert shown['schema_version'] == 1
+	assert shown['score'] is None
+	assert shown['sources'] == {}
+	assert shown['ordinal'] == 0
+	element_keys = set(hit) - {'rank'}
+	assert set(shown) == element_keys | {'schema_version', 'ordinal'}
+	for key in element_keys - {'score', 'sources'}:
+		assert shown[key] == hit[key]
+
+
+@pytest.mark.parametrize('limit', ['0', '-1'])
+def test_gaps_limit_must_be_positive(kb_factory, limit):
+	kb = kb_factory({'甲.md': DOC})
+	result = run_cli(kb.root, 'gaps', '--limit', limit, '--format', 'json')
+	assert result.returncode == 2
+	assert json.loads(result.stdout)['error']['code'] == 2
+
+

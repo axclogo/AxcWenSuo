@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from axc_wensuo.models import Location
+
+_OPENING_RE = re.compile(r'^#{1,6}(?:[ \t]+|$)')
+_CLOSING_RE = re.compile(r'(?:^|[ \t]+)#+$')
 
 
 class ParseError(Exception):
@@ -19,7 +23,8 @@ class Table:
 
 	rows: list[list[str]]
 	header_rows: int = 1
-	row_lines: list[int | None] = field(default_factory=list)
+	row_lines: list[int | None] = field(default_factory=list)  # First line of each row. 每行的起始行号。
+	row_end_lines: list[int | None] = field(default_factory=list)  # Row end line. 每行的结束行号。
 	sheet: str | None = None
 	row_start: int | None = None
 
@@ -63,8 +68,12 @@ class ParsedDocument:
 		return not any(block.text.strip() for block in self.blocks)
 
 def clean_heading(text: str) -> str:
-	"""Strip Markdown heading markers. 去掉 Markdown 标题记号。"""
-	return text.strip().lstrip('#').strip().rstrip('#').strip()
+	"""Strip ATX marker and closing #s; keep C#. 去掉 ATX 记号与闭合 #，保留 C# 这类紧贴文字的 #。"""
+	return _CLOSING_RE.sub('', _OPENING_RE.sub('', text.strip())).strip()
+
+def heading_title(block: Block) -> str:
+	"""Heading text of a heading block. 标题块的标题文本。"""
+	return block.label if block.label is not None else clean_heading(block.text)
 
 def document_title(meta_title: Any, blocks: list[Block], doc_id: str) -> str:
 	"""Title precedence from FR-132. 标题优先级（FR-132）。"""
@@ -72,7 +81,7 @@ def document_title(meta_title: Any, blocks: list[Block], doc_id: str) -> str:
 		return meta_title.strip()
 	for block in blocks:
 		if block.kind == 'heading' and block.level == 1:
-			title = clean_heading(block.label or block.text)
+			title = heading_title(block)
 			if title:
 				return title
 	return Path(doc_id).stem
@@ -99,7 +108,7 @@ def find_section(doc: ParsedDocument, section: list[str]) -> tuple[int, int] | N
 		level = block.level or 1
 		while stack and stack[-1][0] >= level:
 			stack.pop()
-		stack.append((level, clean_heading(block.label or block.text)))
+		stack.append((level, heading_title(block)))
 		chain = [_normalize_title(title) for _, title in stack]
 		if chain[: len(target)] != target:
 			continue

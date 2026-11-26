@@ -9,14 +9,22 @@ from axc_wensuo.dense import DenseIndex, Embedder
 from axc_wensuo.errors import ConfigError
 from axc_wensuo.filters import Filters
 from axc_wensuo.lexical import LexicalIndex
-from axc_wensuo.models import SearchHit, SearchResult
+from axc_wensuo.models import Location, SearchHit, SearchResult
 from axc_wensuo.rerank import Reranker
 from axc_wensuo.store import Store
 from axc_wensuo.synonyms import Synonyms
-from axc_wensuo.tokenizers import Tokenizer, extract_identifiers, identifier_hit, identifier_in_runs
+from axc_wensuo.tokenizers import (
+	Tokenizer,
+	extract_identifiers,
+	identifier_hit,
+	identifier_in_runs,
+	strip_question_words,
+)
 
 MODES = ('lexical', 'dense', 'fused', 'rerank')
-RRF_K = 60
+RRF_K = 20
+# Lexical rank 1 / 2-3 bonus that protects exact matches (from qmd). 关键词第 1、2~3 名加分，保护精确命中（借鉴 qmd）。
+LEXICAL_TOP_BONUS = (0.01, 0.005)
 MAX_QUERY_CHARS = 1000
 
 
@@ -31,6 +39,7 @@ class SearchRequest:
 	max_chars: int = 800
 	mode: str | None = None
 	stale: bool = False
+	expand_section: bool = False
 
 @dataclass
 class SearchResources:
@@ -85,8 +94,9 @@ class SearchEngine:
 		self._sort_by_fused(items)
 		if reranking:
 			items = self._rerank(request.query, items, request.min_score)
-		items = self._limit(items, request.top_k)
-		return self._result(request, self._hits(items, reranking, request.max_chars), identifiers, missing)
+		items = self._limit(items, request.top_k, request.expand_section)
+		hits = self._hits(items, reranking, request)
+		return self._result(request, hits, identifiers, missing)
 
 	def _validate(self, request: SearchRequest, reranking: bool) -> None:
 		if len(request.query) > MAX_QUERY_CHARS:
@@ -107,7 +117,8 @@ class SearchEngine:
 			raise ConfigError('min_score 必须在 [0, 1] 内')
 
 	def _query_tokens(self, query: str) -> list[str]:
-		tokens = self.tokenizer.tokenize(query)
+		# A query made only of question words keeps them. 只有疑问词的查询保留疑问词。
+		tokens = self.tokenizer.tokenize(strip_question_words(query)) or self.tokenizer.tokenize(query)
 		if self.synonyms:
 			tokens = list(dict.fromkeys(tokens + self.synonyms.expanded_tokens(query, self.tokenizer)))
 		if not tokens:
@@ -142,6 +153,7 @@ class SearchEngine:
 			item.fused = 0.0
 			if item.chunk_pk in lexical_rank:
 				item.fused += self.config.fusion.w_lexical / (RRF_K + lexical_rank[item.chunk_pk])
+				item.fused += _top_bonus(lexical_rank[item.chunk_pk]) if self.config.fusion.w_lexical > 0 else 0.0
 			if item.chunk_pk in dense_rank:
 				item.fused += self.config.fusion.w_dense / (RRF_K + dense_rank[item.chunk_pk])
 			item.sources = {}
@@ -179,23 +191,26 @@ class SearchEngine:
 		kept.sort(key=lambda item: (-item.layer, -item.final, item.chunk_id))
 		return kept
 
-	def _limit(self, items: list[_Candidate], top_k: int) -> list[_Candidate]:
+	def _limit(self, items: list[_Candidate], top_k: int, expand_section: bool) -> list[_Candidate]:
 		counts: dict[str, int] = {}
+		sections: set[tuple[str, tuple[str, ...]]] = set()
 		kept: list[_Candidate] = []
 		for item in items:
 			doc_id = item.data['doc_id']
-			if counts.get(doc_id, 0) >= self.config.fusion.max_per_doc:
+			section = (doc_id, tuple(item.data['title_path']))
+			if counts.get(doc_id, 0) >= self.config.fusion.max_per_doc or (expand_section and section in sections):
 				continue
+			sections.add(section)
 			counts[doc_id] = counts.get(doc_id, 0) + 1
 			kept.append(item)
 		return kept[:top_k]
 
-	def _hits(self, items: list[_Candidate], reranking: bool, max_chars: int) -> list[SearchHit]:
+	def _hits(self, items: list[_Candidate], reranking: bool, request: SearchRequest) -> list[SearchHit]:
 		hits: list[SearchHit] = []
 		for rank, item in enumerate(items, start=1):
 			data = item.data
-			text = data['text']
-			truncated = len(text) > max_chars
+			text, location = self._section(data) if request.expand_section else (data['text'], data['location'])
+			truncated = len(text) > request.max_chars
 			sources = dict(item.sources)
 			if reranking:
 				sources['rerank'] = item.probability
@@ -207,14 +222,30 @@ class SearchEngine:
 					doc_title=data['doc_title'],
 					scope=data['scope'],
 					title_path=list(data['title_path']),
-					location=data['location'],
+					location=location,
 					score=item.probability if reranking else item.fused,
 					sources=sources,
-					text=text[:max_chars] if truncated else text,
+					text=text[: request.max_chars] if truncated else text,
 					truncated=truncated,
+					expanded=request.expand_section,
 				)
 			)
 		return hits
+
+	def _section(self, data: dict) -> tuple[str, Location]:
+		"""Join adjacent chunks with the same title_path (from haiku.rag). 拼接章节路径相同的相邻段。"""
+		chunks = self.store.chunks_for_doc(data['doc_id'])
+		position = next(index for index, chunk in enumerate(chunks) if chunk['chunk_id'] == data['chunk_id'])
+		start = end = position
+		while start > 0 and chunks[start - 1]['title_path'] == data['title_path']:
+			start -= 1
+		while end + 1 < len(chunks) and chunks[end + 1]['title_path'] == data['title_path']:
+			end += 1
+		run = chunks[start : end + 1]
+		location = run[0]['location']
+		for chunk in run[1:]:
+			location = location.union(chunk['location'])
+		return '\n\n'.join(chunk['text'] for chunk in run), location
 
 	def _reranking_active(self, mode: str | None) -> bool:
 		if mode == 'rerank':
@@ -235,8 +266,13 @@ class SearchEngine:
 			results=hits,
 		)
 
+def _top_bonus(rank: int) -> float:
+	if rank == 1:
+		return LEXICAL_TOP_BONUS[0]
+	return LEXICAL_TOP_BONUS[1] if rank <= 3 else 0.0
+
 def _present(store: Store, identifier: str) -> bool:
-	return any(identifier_hit(run, identifier) for run in store.ident_runs_matching(identifier))
+	return any(identifier_hit(run, identifier) for run in store.ident_runs_containing(identifier))
 
 def _rank_by_sources(items: list[_Candidate], name: str) -> dict[int, int]:
 	selected = sorted(

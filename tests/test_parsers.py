@@ -155,3 +155,57 @@ def test_parsed_cache_paths(tmp_path):
 	assert not path.exists()
 	assert remove_parsed_cache(tmp_path, 'abc123', 'docling:2.5.0') is False
 	assert remove_parsed_cache(tmp_path, 'abc123', 'markdown:1') is False
+
+
+def test_single_column_pipe_table():
+	doc = parse_markdown('a.md', '# 表\n\n| 名称 |\n| --- |\n| 甲 |\n| 乙 |\n')
+	table = next(block for block in doc.blocks if block.kind == 'table')
+	assert table.table.rows == [['名称'], ['甲'], ['乙']]
+	assert table.line_start == 3
+
+
+def test_thematic_break_is_not_a_paragraph():
+	doc = parse_markdown('a.md', '# 标题\n\n正文\n---\n\n***\n')
+	assert [block.kind for block in doc.blocks] == ['heading', 'paragraph', 'rule', 'rule']
+
+
+def test_heading_trailing_hash_kept_and_section_found():
+	text = '# 语言\n\n## C#\n\nC# 内容。\n\n## F# ##\n\nF# 内容。\n\n## 结尾 #\n\n完。\n'
+	doc = parse_markdown('a.md', text)
+	headings = [block.label for block in doc.blocks if block.kind == 'heading']
+	assert headings == ['语言', 'C#', 'F#', '结尾']
+	start, end = find_section(doc, ['语言', 'C#'])
+	assert doc.text[start:end].startswith('## C#\n\nC# 内容。')
+
+
+def test_multiline_csv_record_starts_at_first_line():
+	doc = parse_table('a.csv', 'a,b\n1,"第一行\n第二行"\n2,z\n')
+	table = doc.blocks[0].table
+	assert table.row_lines == [1, 2, 4]
+	assert table.row_end_lines == [1, 3, 4]
+	from axc_wensuo.chunker import chunk_document
+
+	chunks = chunk_document(doc, scope='_root', doc_title='a', max_chars=1200, min_chars=1)
+	assert chunks[0].location.start == 2
+	assert chunks[0].location.end == 4
+
+
+def test_docx_heading_level_comes_from_item_level():
+	from types import SimpleNamespace
+
+	from axc_wensuo.parsers.docling import _build
+
+	def heading(text: str, level: int):
+		return SimpleNamespace(text=text, level=level, label=SimpleNamespace(value='section_header'), prov=[])
+
+	def paragraph(text: str):
+		return SimpleNamespace(text=text, label=SimpleNamespace(value='text'), prov=[])
+
+	class FakeDocument:
+		def iterate_items(self, with_groups: bool = False):
+			# Tree depth (second value) is deeper than the heading level. 树深度大于标题级别。
+			return iter([(heading('年度总结', 1), 2), (paragraph('正文。'), 3), (heading('目标', 2), 3)])
+
+	parsed = _build('报告.docx', '.docx', FakeDocument())
+	assert [block.level for block in parsed.blocks if block.kind == 'heading'] == [1, 2]
+	assert parsed.doc_title == '年度总结'

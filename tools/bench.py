@@ -16,6 +16,7 @@ from pathlib import Path
 
 from axc_wensuo import KnowledgeBase
 from axc_wensuo.errors import WenSuoError
+from axc_wensuo.kb import SearchOptions
 
 WORDS = [
 	'用户',
@@ -49,6 +50,7 @@ WORDS = [
 	'备份',
 	'回滚',
 ]
+NO_SYNC = SearchOptions(sync=False, entry='eval')
 IDENTIFIERS = ['user_id', 'order_no', 'max_conn', 'v2.1', 'api_key', 'cache_ttl', 'db_url', 'retry_count']
 
 
@@ -92,11 +94,11 @@ def percentile(values: list[float], fraction: float) -> float:
 
 def measure_queries(kb: KnowledgeBase, queries: list[str], warmup: int = 10) -> dict[str, float]:
 	for query in queries[:warmup]:
-		kb.search(query, sync=False)
+		kb.search(query, options=NO_SYNC)
 	samples: list[float] = []
 	for query in queries:
 		started = time.perf_counter()
-		kb.search(query, sync=False)
+		kb.search(query, options=NO_SYNC)
 		samples.append((time.perf_counter() - started) * 1000)
 	return {
 		'p50_ms': round(percentile(samples, 0.50), 2),
@@ -139,6 +141,7 @@ def _parse_args() -> argparse.Namespace:
 	parser.add_argument('--threads', type=int, default=1)
 	parser.add_argument('--workdir', default=None)
 	parser.add_argument('--dense', action='store_true', help='启用默认向量模型（需已下载）')
+	parser.add_argument('--models-dir', default=None, help='向量模型目录（默认 ~/.cache/wensuo/models）')
 	parser.add_argument('--rerank-model-dir', default=None)
 	parser.add_argument('--sync-files', type=int, default=0, help='额外测量 N 个文件无变化同步（如 10000）')
 	parser.add_argument('--json', action='store_true')
@@ -151,6 +154,8 @@ def _run_benchmark(args: argparse.Namespace) -> dict[str, object]:
 	root = workdir / 'kb'
 	root.mkdir(exist_ok=True)
 	config = {'dense': {'enabled': args.dense}, 'threads': args.threads}
+	if args.models_dir:
+		config['models_dir'] = args.models_dir
 	if args.rerank_model_dir:
 		config['rerank'] = {'model_dir': args.rerank_model_dir}
 	(root / 'wensuo.yaml').write_text(json.dumps(config), encoding='utf-8')

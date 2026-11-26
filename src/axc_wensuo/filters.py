@@ -79,8 +79,8 @@ class Filters:
 			conditions.append(f'{alias}.scope IN ({placeholders})')
 			params.extend(self.scope)
 		if self.path_prefix:
-			conditions.append(f"{alias}.doc_id LIKE ? ESCAPE '\\'")
-			params.append(_escape_like(self.path_prefix) + '%')
+			conditions.append(f'substr({alias}.doc_id, 1, ?) = ?')
+			params.extend([len(self.path_prefix), self.path_prefix])
 		for tag in self.tags:
 			conditions.append(f'EXISTS (SELECT 1 FROM doc_tags AS t WHERE t.doc_id = {alias}.doc_id AND t.tag = ?)')
 			params.append(tag)

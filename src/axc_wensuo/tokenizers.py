@@ -120,6 +120,18 @@ class Tokenizer:
 def get_tokenizer(name: str) -> Tokenizer:
 	return Tokenizer(name=name)
 
+# Interrogatives carry no topic and match hub lines like "怎么看". 疑问词不表达主题，只会匹配“怎么看”这类索引行。
+QUESTION_WORDS = ('为什么', '怎么', '怎样', '如何', '什么', '哪些', '哪个', '是否', '多少')
+
+
+def strip_question_words(query: str) -> str:
+	"""Blank out question words before lexical tokenizing (FR-504). 关键词分词前把疑问词换成空格（FR-504）。"""
+	normalized = normalize(query)
+	for word in QUESTION_WORDS:
+		normalized = normalized.replace(word, ' ')
+	return normalized
+
+
 def extract_identifiers(query: str) -> list[str]:
 	"""Extract query identifiers. 提取查询标识符。"""
 	normalized = normalize(query)

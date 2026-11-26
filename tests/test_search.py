@@ -4,7 +4,7 @@ import datetime as dt
 import os
 
 import pytest
-from helpers import read, search, yaml_config
+from helpers import list_docs, read, search, yaml_config
 
 from axc_wensuo.errors import ConfigError
 
@@ -123,9 +123,9 @@ def test_missing_identifiers_and_gaps(kb_factory):
 	assert result.missing_identifiers == ['zz_flag']
 	assert kb.gaps().gaps[0].count == 2
 
-	search(kb, 'zz_flag 字段', entry='mcp')
+	search(kb, 'zz_flag 字段', entry='cli')
 	assert len(kb.gaps().gaps) == 2
-	assert {gap.entry for gap in kb.gaps().gaps} == {'api', 'mcp'}
+	assert {gap.entry for gap in kb.gaps().gaps} == {'api', 'cli'}
 
 	kb.clear_gaps()
 	assert kb.gaps().gaps == []
@@ -219,3 +219,82 @@ def test_show_and_read_api(kb_factory):
 	assert slice_one.next_offset == 10
 	assert read(kb, '不存在.md') is None
 	assert read(kb, '部署.md', section='部署 > 不存在') is None
+
+
+def test_path_prefix_is_case_sensitive(kb_factory):
+	# Distinct names so case-insensitive file systems keep both. 名字不同，大小写不敏感的文件系统也能共存。
+	kb = kb_factory({'Docs/a.md': '# A\n\n关键词乙。\n', 'docsx/b.md': '# B\n\n关键词乙。\n'})
+	assert {hit.doc_id for hit in _search_hits(kb, '关键词乙', path_prefix='docs')} == {'docsx/b.md'}
+	assert {hit.doc_id for hit in _search_hits(kb, '关键词乙', path_prefix='Docs')} == {'Docs/a.md'}
+	assert {doc.doc_id for doc in list_docs(kb, path_prefix='docs').docs} == {'docsx/b.md'}
+
+
+def test_path_prefix_with_like_wildcards_is_literal(kb_factory):
+	docs = {'a_b/x.md': '# X\n\n关键词丙。\n', 'acb/y.md': '# Y\n\n关键词丙。\n', '100%/z.md': '# Z\n\n关键词丙。\n'}
+	kb = kb_factory(docs)
+	assert {hit.doc_id for hit in _search_hits(kb, '关键词丙', path_prefix='a_b')} == {'a_b/x.md'}
+	assert {hit.doc_id for hit in _search_hits(kb, '关键词丙', path_prefix='100%')} == {'100%/z.md'}
+
+
+def test_missing_identifiers_use_substring_with_boundaries(kb_factory):
+	kb = kb_factory({'甲.md': '# 甲\n\n关联条件 `a.user_id = b.id`，另有 abc 与 user_ids。\n'})
+	assert search(kb, 'user_id 关联').missing_identifiers == []
+	assert search(kb, 'b.id 关联').missing_identifiers == []
+	# Boundary rule from section 4: user is not hit by user_id or user_ids. 第 4 节边界规则。
+	assert search(kb, 'user 关联').missing_identifiers == ['user']
+	# Underscore is literal, not a LIKE wildcard. 下划线按字面比较，不是通配符。
+	assert search(kb, 'a_c 关联').missing_identifiers == ['a_c']
+
+
+def test_expand_section_returns_whole_section_once(kb_factory):
+	part_one = '第一部分说明。' * 30
+	part_two = '第二部分说明，包含关键词丁。' * 20
+	text = f'# 手册\n\n## 安装\n\n{part_one}\n\n{part_two}\n\n## 其他\n\n' + '无关内容。' * 30 + '\n'
+	kb = kb_factory({'手册.md': text}, config=yaml_config(chunk={'max_chars': 300, 'min_chars': 80}))
+	plain = search(kb, '关键词丁', top_k=5).results
+	assert plain[0].expanded is False
+	assert len({hit.chunk_id for hit in plain}) == len(plain)
+	expanded = search(kb, '关键词丁', top_k=5, expand_section=True).results
+	install = [hit for hit in expanded if hit.title_path == ['手册', '安装']]
+	assert len(install) == 1
+	assert install[0].expanded is True
+	assert install[0].text.startswith('# 手册\n\n## 安装') and part_two[:20] in install[0].text
+	assert install[0].location.start == 1
+	lines = text.splitlines()
+	assert '关键词丁' in '\n'.join(lines[install[0].location.start - 1 : install[0].location.end])
+
+
+def test_lexical_top_rank_bonus():
+	from axc_wensuo.search import LEXICAL_TOP_BONUS, RRF_K, _top_bonus
+
+	assert [_top_bonus(rank) for rank in (1, 2, 3, 4)] == [*LEXICAL_TOP_BONUS, LEXICAL_TOP_BONUS[1], 0.0]
+	# Lexical #1 alone outranks lexical #4 plus dense #1. 只有关键词第 1 名的段排在关键词第 4 名加向量第 1 名之前。
+	lexical_first = 1 / (RRF_K + 1) + _top_bonus(1)
+	lexical_fourth_with_dense = 1 / (RRF_K + 4) + 0.25 / (RRF_K + 1)
+	assert lexical_first > lexical_fourth_with_dense
+
+
+def test_lexical_top_hit_survives_dense_competition(kb_factory, tmp_path):
+	from helpers import make_embedder_dir
+
+	docs = {
+		'甲.md': '# 甲\n\n独有词宇宙飞船在这里出现。\n',
+		'乙.md': '# 乙\n\n飞船飞船飞船，其他内容其他内容。\n',
+	}
+	model_dir = tmp_path / 'models' / 'bge-small-zh-v1.5'
+	make_embedder_dir(model_dir, [path + text for path, text in docs.items()] + ['宇宙飞船'])
+	kb = kb_factory(docs, config=yaml_config(dense={'enabled': True}, models_dir=str(tmp_path / 'models')))
+	lexical = search(kb, '宇宙飞船', mode='lexical').results
+	fused = search(kb, '宇宙飞船').results
+	assert fused[0].chunk_id == lexical[0].chunk_id
+
+
+def test_question_words_do_not_drive_lexical_ranking(kb_factory):
+	docs = {
+		'索引.md': '# 索引\n\n权限怎么看？订单怎么看？报表怎么看？怎么排查问题？\n',
+		'权限.md': '# 权限\n\n后台权限排查：先看角色。\n',
+	}
+	kb = kb_factory(docs)
+	assert search(kb, '权限怎么排查').results[0].doc_id == '权限.md'
+	# Query of question words only keeps its tokens. 只有疑问词的查询仍能检索。
+	assert search(kb, '怎么').results[0].doc_id == '索引.md'

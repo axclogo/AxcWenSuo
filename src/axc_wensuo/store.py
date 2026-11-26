@@ -475,9 +475,9 @@ class Store:
 		).fetchall()
 
 	def vectors_with_filters(self, where_sql: str, params: list[Any]) -> list[sqlite3.Row]:
-		clause = f'WHERE vec IS NOT NULL AND {where_sql}' if where_sql else 'WHERE vec IS NOT NULL'
+		clause = f'WHERE c.vec IS NOT NULL AND {where_sql}' if where_sql else 'WHERE c.vec IS NOT NULL'
 		return self.conn.execute(
-			f'SELECT id, chunk_id, vec FROM chunks {clause}',
+			f'SELECT c.id, c.chunk_id, c.vec FROM chunks AS c {clause}',
 			params,
 		).fetchall()
 
@@ -505,11 +505,10 @@ class Store:
 				result[int(row['chunk_pk'])].append(row['run'])
 		return result
 
-	def ident_runs_matching(self, pattern: str) -> list[str]:
-		return [
-			row['run']
-			for row in self.conn.execute("SELECT run FROM ident_run WHERE run LIKE ? ESCAPE '\\'", (pattern,))
-		]
+	def ident_runs_containing(self, identifier: str) -> list[str]:
+		"""Runs containing the identifier as a substring. 含该标识符子串的标识符串。"""
+		rows = self.conn.execute('SELECT run FROM ident_run WHERE instr(run, ?) > 0', (identifier,))
+		return [row['run'] for row in rows]
 
 
 	def get_failure(self, doc_id: str) -> dict[str, Any] | None:
@@ -534,6 +533,17 @@ class Store:
 				record.mtime_ns,
 			),
 		)
+
+	def failure_ids(self) -> set[str]:
+		return {row['doc_id'] for row in self.conn.execute('SELECT doc_id FROM failures')}
+
+	def update_failure_stat(self, doc_id: str, size: int, mtime_ns: int) -> None:
+		self.conn.execute('UPDATE failures SET size = ?, mtime_ns = ? WHERE doc_id = ?', (size, mtime_ns, doc_id))
+
+	def parsed_cache_in_use(self, sha256: str, parser: str) -> bool:
+		sql = 'SELECT 1 FROM docs WHERE sha256 = ? AND parser = ? LIMIT 1'
+		row = self.conn.execute(sql, (sha256, parser)).fetchone()
+		return row is not None
 
 	def delete_failure(self, doc_id: str) -> None:
 		self.conn.execute('DELETE FROM failures WHERE doc_id = ?', (doc_id,))

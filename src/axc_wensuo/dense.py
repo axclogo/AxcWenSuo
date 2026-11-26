@@ -115,14 +115,9 @@ class Embedder:
 				windows.append(self._encode_window(content))
 				owners.append(index)
 				continue
-			start = 0
-			while start < len(content):
-				window = content[start : start + WINDOW_TOKENS]
-				if not window:
-					break
-				windows.append(self._encode_window(window))
+			for start in _window_starts(len(content)):
+				windows.append(self._encode_window(content[start : start + WINDOW_TOKENS]))
 				owners.append(index)
-				start += WINDOW_STEP
 		if not windows:
 			return np.zeros((len(texts), self.dimension), dtype=np.float32)
 		vectors = np.zeros((len(windows), self.dimension), dtype=np.float32)
@@ -142,6 +137,13 @@ class Embedder:
 		content = self._content_ids(QUERY_PREFIX + text)[:MAX_CONTENT_TOKENS]
 		vectors = self._run_ids([self._encode_window(content)])
 		return _l2_normalize(vectors)[0]
+
+def _window_starts(length: int) -> list[int]:
+	"""Window starts; stop once a window reaches the end. 窗口起点；某窗到达末尾即停止，避免末窗落在前窗之内。"""
+	starts = [0]
+	while starts[-1] + WINDOW_TOKENS < length:
+		starts.append(starts[-1] + WINDOW_STEP)
+	return starts
 
 def _l2_normalize(vectors: np.ndarray) -> np.ndarray:
 	norm = np.linalg.norm(vectors, axis=1, keepdims=True)

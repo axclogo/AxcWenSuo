@@ -16,6 +16,7 @@ from axc_wensuo.models import Location
 from axc_wensuo.parsers.base import Block, ParsedDocument, ParseError, Table, document_title, render_table
 
 PARSER_NAME = 'docling'
+ADAPTER_VERSION = 2  # Bump when the adapter output changes. 适配层输出变化时加 1。
 _CONVERTER: Any = None
 _SAFE_VERSION_RE = re.compile(r'[^0-9A-Za-z_.\-]+')
 
@@ -30,8 +31,12 @@ def docling_version() -> str:
 	except importlib.metadata.PackageNotFoundError as exc:
 		raise WenSuoRuntimeError('Docling 已安装但缺少包元数据；请重新安装 docs 扩展') from exc
 
+def cache_version() -> str:
+	"""Docling version plus adapter version. Docling 版本加适配层版本。"""
+	return f'{docling_version()}+a{ADAPTER_VERSION}'
+
 def parser_version() -> str:
-	return f'{PARSER_NAME}:{docling_version()}'
+	return f'{PARSER_NAME}:{cache_version()}'
 
 def parsed_cache_path(index_dir: str | Path, sha256: str, version: str) -> Path:
 	return Path(index_dir) / 'parsed' / f'{sha256}-{_SAFE_VERSION_RE.sub("_", version)}.json'
@@ -52,7 +57,7 @@ def parse_docling(doc_id: str, path: Path, index_dir: Path) -> ParsedDocument:
 	if not docling_available():
 		raise WenSuoRuntimeError('缺少 docs 扩展：请安装 docling（pip install "axc-wensuo[docs]"）后重试')
 	digest = file_sha256(path)
-	cache_file = parsed_cache_path(index_dir, digest, docling_version())
+	cache_file = parsed_cache_path(index_dir, digest, cache_version())
 	if cache_file.is_file():
 		return _read_cache(cache_file, doc_id)
 	document = _convert(path)
@@ -92,7 +97,7 @@ def _build(doc_id: str, extension: str, document: Any) -> ParsedDocument:
 		if not text.strip():
 			continue
 		if 'section_header' in label or label in ('title', 'doc_title'):
-			collector.add_heading(item, text, level, sheet)
+			collector.add_heading(item, text, sheet)
 		else:
 			collector.add_text('list' if 'list' in label else 'paragraph', text, item, sheet)
 	return collector.document(doc_id)
@@ -117,7 +122,9 @@ class _BlockCollector:
 		self.blocks: list[Block] = []
 		self.offset = 0
 
-	def add_heading(self, item: Any, text: str, level: int | None, sheet: str | None) -> None:
+	def add_heading(self, item: Any, text: str, sheet: str | None) -> None:
+		# Heading depth is the item's own level, not its tree depth. 标题级别取条目自带的 level，不是树深度。
+		level = getattr(item, 'level', None)
 		heading_level = min(level, 6) if isinstance(level, int) and level > 0 else 1
 		location = _item_location(item, self.extension, sheet=sheet)
 		self._append(
@@ -215,6 +222,7 @@ def _to_cache(parsed: ParsedDocument) -> dict[str, Any]:
 					'rows': block.table.rows,
 					'header_rows': block.table.header_rows,
 					'row_lines': block.table.row_lines,
+					'row_end_lines': block.table.row_end_lines,
 					'sheet': block.table.sheet,
 					'row_start': block.table.row_start,
 				},
@@ -233,6 +241,7 @@ def _from_cache(doc_id: str, data: dict[str, Any]) -> ParsedDocument:
 				rows=table_raw['rows'],
 				header_rows=table_raw['header_rows'],
 				row_lines=table_raw.get('row_lines', []),
+				row_end_lines=table_raw.get('row_end_lines', []),
 				sheet=table_raw.get('sheet'),
 				row_start=table_raw.get('row_start'),
 			)

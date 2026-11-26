@@ -6,9 +6,9 @@
 
 **Offline, Chinese-first RAG engine with no server: any folder becomes a searchable knowledge base for humans and AI agents.**
 
-中文优先、不起服务、目录即知识库的本地 RAG 引擎。人和 agent 共用同一个内核：命令行、MCP、Python API。
+中文优先、不起服务、目录即知识库的本地 RAG 引擎。人和程序共用同一个内核：命令行、Python API。
 
-> 状态：`0.1.0`（Alpha）。核心检索、同步、引用、缺口清单、评测、CLI/MCP/API 已实现并有自动化测试；
+> 状态：`0.1.0`（Alpha）。核心检索、同步、引用、缺口清单、评测、CLI/API 已实现并有自动化测试；
 > 默认向量模型的 Release（`models-v1`）尚未发布，见[准备模型](#准备模型)。
 
 ## 特性
@@ -19,7 +19,7 @@
 - **分数可信**：可选重排分数经过温度/偏置校准，阈值有明确含义；未开启重排时分数只用于排序，不接受阈值。
 - **知道“查不到”**：结果里列出知识库中不存在的标识符，并把空结果、缺标识符的查询记入缺口清单。
 - **低资源、离线**：运行时只有 numpy / onnxruntime / tokenizers / PyYAML / filelock，不依赖 torch，不联网。
-- **三种入口一个内核**：命令行文本/JSON、MCP（stdio）、Python API 的检索结果完全一致。
+- **两种入口一个内核**：命令行文本/JSON、Python API 的检索结果完全一致。
 
 ## 安装
 
@@ -34,16 +34,16 @@ uv sync
 uv run ws --version
 ```
 
-需要解析 PDF / Word / Excel / PPT / HTML 时安装 `docs` 扩展；需要 MCP 时安装 `mcp` 扩展：
+需要解析 PDF / Word / Excel / PPT / HTML 时安装 `docs` 扩展（会带入 torch，体积较大）：
 
 ```bash
-uv sync --extra docs --extra mcp
+uv sync --extra docs
 ```
 
 > `docs` 扩展使用 Docling。首次解析 PDF 时 Docling 会下载版面/表格模型（需要网络），之后离线可用；
 > 也可以按 Docling 文档预置 `DOCLING_ARTIFACTS_PATH`。CI 不安装 Docling，相关测试会自动跳过。
 
-发布到 PyPI 后可用：`pip install "axc-wensuo[docs,mcp]"`。
+发布到 PyPI 后可用：`pip install "axc-wensuo[docs]"`。
 
 ## 快速开始
 
@@ -89,24 +89,6 @@ with KnowledgeBase('/path/to/docs') as kb:
 	print(result.to_dict())  # 与 CLI --format json 完全相同
 ```
 
-### MCP
-
-MCP 服务器走 stdio，由 agent 客户端按需拉起，没有常驻进程：
-
-```json
-{
-	"mcpServers": {
-		"wensuo": {
-			"command": "ws",
-			"args": ["--root", "/path/to/docs", "mcp"]
-		}
-	}
-}
-```
-
-工具：`search`、`read`、`list_docs`、`list_scopes`。返回值与对应命令行的 `--format json` 完全一致；
-`search` 的工具描述里带有知识库名、专题列表、`score_kind` 与 `missing_identifiers` 的含义。
-
 ## 配置
 
 知识库配置是可选的 `<root>/wensuo.yaml`（全部字段可省略）：
@@ -122,9 +104,9 @@ max_file_mb: 50
 scopes: {数据字典: 表结构与字段说明}
 scope_rules: [{glob: "**/*报销*", scope: 财务}]
 chunk: {max_chars: 1200, min_chars: 80}
-lexical: {tokenizer: cjk_bigram, title_weight: 2, k1: 1.2, b: 0.75}
+lexical: {tokenizer: cjk_bigram, title_weight: 2, k1: 1.2, b: 0.5}
 dense: {enabled: true, model: bge-small-zh-v1.5}
-fusion: {w_lexical: 1.0, w_dense: 0.5, candidates: 50, max_per_doc: 3}
+fusion: {w_lexical: 1.0, w_dense: 0.25, candidates: 50, max_per_doc: 3}
 rerank: {model_dir: null, top_k: 30, min_score: null}
 ```
 
@@ -193,7 +175,6 @@ ws doctor [--format text|json]
 ws gaps [--limit 50] [--format text|json] [--clear]
 ws eval QUERIES.jsonl [--modes lexical,dense,fused,rerank] [--k 5] [--format text|json]
 ws models download [--force]
-ws mcp
 ws --version
 ```
 
@@ -219,7 +200,7 @@ ws eval eval/queries.jsonl --modes lexical,fused --k 5
 ## 开发
 
 ```bash
-uv sync --dev --extra mcp
+uv sync --dev
 uv run ruff check .
 uv run pytest
 ```
@@ -242,4 +223,4 @@ uv run pytest
 ## 许可证
 
 [Apache-2.0](LICENSE)。依赖许可：Docling（MIT）、bge-small-zh-v1.5（MIT）、onnxruntime（MIT）、
-tokenizers（Apache-2.0）、filelock（Unlicense）、PyYAML（MIT）、mcp（MIT）。
+tokenizers（Apache-2.0）、filelock（Unlicense）、PyYAML（MIT）。

@@ -11,13 +11,13 @@ from axc_wensuo.parsers.base import (
 	Block,
 	ParsedDocument,
 	Table,
-	clean_heading,
 	document_title,
 	normalize_meta_list,
 )
 
 HEADING_RE = re.compile(r'^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$')
 FENCE_RE = re.compile(r'^ {0,3}(`{3,}|~{3,})(.*)$')
+RULE_RE = re.compile(r'^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$')
 LIST_RE = re.compile(r'^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+')
 SEPARATOR_CELL_RE = re.compile(r'^:?-{1,}:?$')
 META_KEYS = ('title', 'tags', 'aliases', 'scope')
@@ -102,7 +102,7 @@ def _heading_block(text: str, lines: list[str], offsets: list[int], index: int, 
 		line_start=index + 1,
 		line_end=index + 1,
 		level=len(heading.group(1)),
-		label=clean_heading(heading.group(2)),
+		label=heading.group(2),
 	)
 
 def _line_block(text: str, lines: list[str], offsets: list[int], index: int) -> tuple[Block, int]:
@@ -121,6 +121,8 @@ def _line_block(text: str, lines: list[str], offsets: list[int], index: int) -> 
 	if fence is not None:
 		end = _fence_end(lines, index, fence.group(1))
 		return make('code', index, end), end + 1
+	if RULE_RE.match(line.rstrip('\r\n')) is not None:
+		return make('rule', index, index), index + 1
 	if _is_table_start(lines, index):
 		row_lines, rows, end = _parse_table(lines, index)
 		table = Table(rows=rows, header_rows=1, row_lines=row_lines)
@@ -157,7 +159,7 @@ def _paragraph_end(lines: list[str], start: int) -> int:
 			break
 		if HEADING_RE.match(line.rstrip('\r\n')) is not None:
 			break
-		if FENCE_RE.match(line.rstrip('\r\n')) is not None:
+		if FENCE_RE.match(line.rstrip('\r\n')) is not None or RULE_RE.match(line.rstrip('\r\n')) is not None:
 			break
 		if _is_table_start(lines, index):
 			break
@@ -196,10 +198,7 @@ def _is_separator(line: str) -> bool:
 	stripped = line.strip()
 	if '|' not in stripped:
 		return False
-	cells = _split_row(stripped)
-	if len(cells) < 2:
-		return False
-	return all(SEPARATOR_CELL_RE.match(cell.strip()) for cell in cells)
+	return all(SEPARATOR_CELL_RE.match(cell.strip()) for cell in _split_row(stripped))
 
 def _split_row(line: str) -> list[str]:
 	stripped = line.strip()

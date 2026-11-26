@@ -43,7 +43,6 @@ def build_parser() -> argparse.ArgumentParser:
 	_add_gaps(sub)
 	_add_eval(sub)
 	_add_models(sub)
-	_add_mcp(sub)
 	return parser
 
 def _add_search(sub: argparse._SubParsersAction) -> None:
@@ -57,6 +56,7 @@ def _add_search(sub: argparse._SubParsersAction) -> None:
 	parser.add_argument('--modified-after', help='只返回该日期（含）之后修改的文件，YYYY-MM-DD')
 	parser.add_argument('--min-score', type=float, help='校准阈值，仅开启重排时可用')
 	parser.add_argument('--max-chars', type=int, default=800, help='结果正文最大码点数（默认 800）')
+	parser.add_argument('--expand-section', action='store_true', help='结果正文扩展为命中段所在章节的全部段')
 	parser.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
 	parser.add_argument('--no-sync', action='store_true', help='跳过自动同步')
 	parser.add_argument('--threads', type=int, help='线程数')
@@ -114,9 +114,6 @@ def _add_models(sub: argparse._SubParsersAction) -> None:
 	download.add_argument('--force', action='store_true', help='即使校验通过也重新下载')
 	download.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
 
-def _add_mcp(sub: argparse._SubParsersAction) -> None:
-	sub.add_parser('mcp', help='启动 stdio MCP 服务')
-
 def main(argv: list[str] | None = None) -> int:
 	parser = build_parser()
 	_LAST_PARSE_ERROR.clear()
@@ -156,8 +153,6 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 			for path in paths:
 				print(path)
 		return 0
-	if args.command == 'mcp':
-		return _run_mcp(args)
 	if args.command == 'sync':
 		return _run_sync(args)
 	kb = _open_kb(args)
@@ -198,6 +193,7 @@ def _run_search(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 		max_chars=args.max_chars,
 		sync=not args.no_sync,
 		entry='cli',
+		expand_section=args.expand_section,
 	)
 	result = kb.search(args.query, top_k=args.top_k, options=options)
 	if args.format == 'json':
@@ -332,16 +328,6 @@ def _run_eval(kb: KnowledgeBase, args: argparse.Namespace) -> int:
 				f'answerable_return_rate={_metric(metrics.answerable_return_rate)} '
 				f'false_return_rate={_metric(metrics.false_return_rate)} n={metrics.n}'
 			)
-	return 0
-
-def _run_mcp(args: argparse.Namespace) -> int:
-	from axc_wensuo.mcp_server import run_server
-
-	kb = _open_kb(args)
-	try:
-		run_server(kb)
-	finally:
-		kb.close()
 	return 0
 
 def _render_search_text(result, max_chars: int) -> None:
