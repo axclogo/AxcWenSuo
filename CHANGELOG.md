@@ -16,6 +16,8 @@
 - `path_prefix` 区分大小写；`missing_identifiers` 按第 4 节子串加边界判断。
 
 ### Added
+- 重排模型的 `model_meta.json` 可以不带 `default_min_score`，阈值改由 `rerank.min_score` 或 `min_score` 提供（FR-611）。
+- CI：失败用例写成注解；新增 docs 扩展（Docling）测试任务；新增打标签发布 PyPI 的工作流。
 - `--expand-section` / `SearchOptions(expand_section=True)`：结果扩展为命中段所在章节（FR-605，借鉴 haiku.rag）。
 - `tools/export_embedder.py` 导出后校验 opset、单文件、可加载、输出名与形状。
 

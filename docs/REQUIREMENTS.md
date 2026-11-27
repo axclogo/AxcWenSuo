@@ -271,7 +271,7 @@
 - **FR-611** 配置 `rerank.model_dir` 指向一个模型目录时开启。目录内必须有：
   - `model.onnx`：交叉编码器，输入 `input_ids`、`attention_mask`，可选 `token_type_ids`；输出 logits，形状 `[batch, 1]` 或 `[batch, 2]`。
   - `tokenizer.json`
-  - `model_meta.json`：`{"max_length": 384, "query_max_tokens": 64, "passage_chars": 320, "temperature": 1.0, "bias": 0.0, "default_min_score": 0.2}`，其中 `max_length`、`temperature`、`bias`、`default_min_score` 必填。
+  - `model_meta.json`：`{"max_length": 384, "query_max_tokens": 64, "passage_chars": 320, "temperature": 1.0, "bias": 0.0, "default_min_score": 0.2}`，其中 `max_length`、`temperature`、`bias` 必填。`default_min_score` 可省略；省略时阈值必须由 `rerank.min_score` 或调用参数 `min_score` 给出，否则检索报参数错误（退出码 2）。
 - **FR-612** 输入：查询截断到 `query_max_tokens`；段落 = 章节路径（` > ` 连接）+ 换行 + `text` 前 `passage_chars` 个字符；按 `[CLS] 查询 [SEP] 段落 [SEP]` 编码，总长截断到 `max_length`。
 - **FR-613** 概率：logit = 输出为 1 列时取该列，为 2 列时取 `第 2 列 − 第 1 列`；`p = sigmoid(logit / temperature + bias)`。
 - **FR-614** 对融合排序后的前 `rerank.top_k`（默认 30）段重排。按融合名次 r 计算 `s_ret = 1 − (r − 1) / top_k`，`final = w × s_ret + (1 − w) × p`，其中 r ≤ 3 时 w = 0.75，4 ≤ r ≤ 10 时 w = 0.60，r > 10 时 w = 0.40。r 是第 4 步得到的分层后名次。排序见第 7.3 节第 6 步。
