@@ -134,7 +134,7 @@ def test_touched_file_does_not_reparse(kb_factory, monkeypatch):
 
 	monkeypatch.setattr(kb_module, 'parse_file', counting)
 	path = kb.root / '甲.md'
-	path.write_text(DOC_A, encoding='utf-8')
+	path.write_text(DOC_A, encoding='utf-8', newline='')
 	report = kb.sync()
 	assert report.added == [] and report.modified == []
 	assert calls['value'] == 0

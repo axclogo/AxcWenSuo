@@ -124,7 +124,7 @@ def test_empty_csv():
 
 def test_parse_file_dispatch_and_missing_docs(tmp_path):
 	md = tmp_path / 'a.md'
-	md.write_text('# 标题\n\n正文\n', encoding='utf-8')
+	md.write_text('# 标题\n\n正文\n', encoding='utf-8', newline='')
 	assert parse_file(md, 'a.md').doc_title == '标题'
 	txt = tmp_path / 'a.txt'
 	txt.write_bytes('中文'.encode('gb18030'))

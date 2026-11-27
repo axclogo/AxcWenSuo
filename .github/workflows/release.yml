@@ -1,0 +1,24 @@
+name: Release
+# Push a tag vX.Y.Z to build and publish to PyPI via trusted publishing (no stored token).
+# 推送 vX.Y.Z 标签即构建并通过 PyPI 可信发布上传（仓库里不存令牌）。
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  publish:
+    name: Build and publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Check tag matches package version
+        run: |
+          version=$(uv run --no-project python -c "import re;print(re.search(r\"__version__ = '([^']+)'\", open('src/axc_wensuo/__init__.py').read()).group(1))")
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "::error::tag $GITHUB_REF_NAME != v$version"; exit 1; }
+      - name: Build
+        run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1
