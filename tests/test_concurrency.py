@@ -61,6 +61,7 @@ def test_query_returns_stale_while_another_process_syncs(root):
 				_command(root, 'search', '关键词', '--format', 'json'),
 				capture_output=True,
 				text=True,
+				encoding='utf-8',
 				timeout=60,
 				env=env,
 			)
@@ -78,6 +79,7 @@ def test_query_returns_stale_while_another_process_syncs(root):
 		_command(root, 'search', '关键词', '--format', 'json'),
 		capture_output=True,
 		text=True,
+		encoding='utf-8',
 		timeout=60,
 		env=env,
 	)

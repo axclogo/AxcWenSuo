@@ -114,7 +114,14 @@ def _add_models(sub: argparse._SubParsersAction) -> None:
 	download.add_argument('--force', action='store_true', help='即使校验通过也重新下载')
 	download.add_argument('--format', choices=('text', 'json'), default='text', help='输出格式')
 
+def _use_utf8_streams() -> None:
+	"""Output is always UTF-8, even on Windows code pages (FR-1003). 输出固定为 UTF-8，Windows 代码页下也一样。"""
+	for stream in (sys.stdout, sys.stderr):
+		if hasattr(stream, 'reconfigure'):
+			stream.reconfigure(encoding='utf-8')
+
 def main(argv: list[str] | None = None) -> int:
+	_use_utf8_streams()
 	parser = build_parser()
 	_LAST_PARSE_ERROR.clear()
 	try:

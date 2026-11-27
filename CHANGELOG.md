@@ -24,6 +24,7 @@
 - 未使用的 `open_knowledge_base`。
 
 ### Fixed
+- Windows 下命令行输出中文时按代码页编码崩溃（`UnicodeEncodeError`）；标准输出和错误输出固定为 UTF-8。
 - 开启向量时任何过滤条件都报 `no such column: c.scope`。
 - 坏符号链接、无读权限文件、超长 CSV 单元格导致整次同步失败；现在记为跳过或解析失败，其余文件照常同步。
 - 修改 `scope_rules` 后专题不更新；删除或排除的文件失败记录残留；解析失败文件每次重算哈希。

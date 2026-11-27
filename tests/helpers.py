@@ -125,7 +125,7 @@ def yaml_config(**overrides) -> str:
 def run_cli(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 	command = [sys.executable, '-m', 'axc_wensuo.cli', '--root', str(root), *args]
 	env = os.environ.copy()
-	return subprocess.run(command, capture_output=True, text=True, env=env, timeout=120)
+	return subprocess.run(command, capture_output=True, text=True, encoding='utf-8', env=env, timeout=120)
 
 FILTER_KEYS = {'scope', 'path_prefix', 'tags', 'file_types', 'modified_after'}
 
