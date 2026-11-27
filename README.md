@@ -210,7 +210,7 @@ uv run pytest
 - 非功能基准：[tools/bench.py](tools/bench.py)。
 - 模型导出：[tools/export_embedder.py](tools/export_embedder.py)。
 - 实现说明（索引结构、同步流程、检索流水线）见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-- 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，开发红线见 [docs/CODE_POLICY.md](docs/CODE_POLICY.md)，行为准则见 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)。
+- 贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，开发红线见 [docs/CODE_POLICY.md](docs/CODE_POLICY.md)。
 
 ## 已知限制
 
