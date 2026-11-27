@@ -182,7 +182,8 @@ class SearchEngine:
 			threshold = self.reranker.meta.default_min_score
 		if threshold is None:
 			raise ConfigError(
-				'重排模型 model_meta.json 没有 default_min_score；请在 wensuo.yaml 设置 rerank.min_score 或传入 min_score'
+				'重排模型 model_meta.json 没有 default_min_score；'
+				'请在 wensuo.yaml 设置 rerank.min_score 或传入 min_score'
 			)
 		kept: list[_Candidate] = []
 		for item, probability in zip(selected, probabilities, strict=True):
