@@ -60,12 +60,18 @@ uv run pytest
 - 在 `tests/test_sync.py` 中补重建、增量、并发场景。
 
 ### 发布新版本的模型（`models-v1`）
-
-1. 运行 `tools/export_embedder.py`，按需求第 7.4 节规格导出。
-2. 把两个文件的 SHA-256 与大小填进 `src/axc_wensuo/embedder_meta.py`。
-3. 上传到 GitHub Release 标签 `models-v1`。
-4. 更新 CHANGELOG 与 README 的模型说明。
-
+1. 导出（torch 等只临时安装，不进项目依赖）：
+   `uv run --no-project --python 3.13 --with torch --with transformers --with onnx --with onnxruntime --with huggingface_hub python tools/export_embedder.py --output dist/models/bge-small-zh-v1.5`
+   脚本会校验 opset、单文件、可加载、输出名与形状，并打印两个文件的 SHA-256。同一 revision 重复导出结果逐字节相同。
+   当前 revision 的哈希：`model.onnx` = `766903529093e202cd43e0f94a621c776b37085d36f48d3b42a623a308a0819e`（94,859,070 字节），
+   `tokenizer.json` = `48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26`（439,125 字节）。
+2. 先上传 Release，再改代码（顺序不能反，否则 `ws models download` 会下载到 404）：
+   `gh release create models-v1 dist/models/bge-small-zh-v1.5/model.onnx dist/models/bge-small-zh-v1.5/tokenizer.json --title models-v1 --notes "bge-small-zh-v1.5 ONNX（opset 17）"`
+3. 把两个哈希填进 `src/axc_wensuo/embedder_meta.py` 的 `MODEL_FILES`，更新 README 的模型说明和 CHANGELOG。
+### 发布 Python 包
+1. 一次性配置：在 PyPI 为项目 `axc-wensuo` 添加可信发布者（仓库 `axclogo/AxcWenSuo`、工作流 `release.yml`、环境 `pypi`），并在 GitHub 仓库设置里建 `pypi` 环境。
+2. 改 `src/axc_wensuo/__init__.py` 的 `__version__` 和 CHANGELOG，提交后推送同名标签：`git tag v0.2.0 && git push origin v0.2.0`。
+   工作流会校验标签与版本一致，然后构建并上传。
 ## 提交与 Pull Request
 
 - 一个 PR 做一件事；包含行为变更时同步更新文档与 CHANGELOG。
