@@ -78,7 +78,7 @@ def make_reranker_dir(
 	texts: list[str],
 	weights: dict[str, float],
 	*,
-	default_min_score: float = 0.5,
+	default_min_score: float | None = 0.5,
 ) -> Path:
 	"""Fake reranker summing per-character weights. 按字符权重求和的假重排模型。"""
 	model_dir.mkdir(parents=True, exist_ok=True)
@@ -107,19 +107,10 @@ def make_reranker_dir(
 	model.ir_version = 9
 	onnx.checker.check_model(model)
 	onnx.save(model, str(model_dir / 'model.onnx'))
-	(model_dir / 'model_meta.json').write_text(
-		json.dumps(
-			{
-				'max_length': 64,
-				'query_max_tokens': 32,
-				'passage_chars': 100,
-				'temperature': 1.0,
-				'bias': 0.0,
-				'default_min_score': default_min_score,
-			}
-		),
-		encoding='utf-8',
-	)
+	meta = {'max_length': 64, 'query_max_tokens': 32, 'passage_chars': 100, 'temperature': 1.0, 'bias': 0.0}
+	if default_min_score is not None:
+		meta['default_min_score'] = default_min_score
+	(model_dir / 'model_meta.json').write_text(json.dumps(meta), encoding='utf-8')
 	return model_dir
 
 def yaml_config(**overrides) -> str:

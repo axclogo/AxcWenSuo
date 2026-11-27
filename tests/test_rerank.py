@@ -97,3 +97,23 @@ def test_rerank_keeps_identifier_layer_order(kb_factory, tmp_path):
 	result = search(kb, '篇 zz_marker', top_k=2)
 	assert [hit.doc_id for hit in result.results] == ['带标识符.md', '无标识符.md']
 	assert result.results[0].sources['rerank'] < result.results[1].sources['rerank']
+
+
+def test_meta_without_default_min_score_uses_configured_threshold(kb_factory, tmp_path):
+	texts = [path + text for path, text in DOCS.items()] + ['好', '坏', '篇']
+	model_dir = tmp_path / 'rerank-no-default'
+	make_reranker_dir(model_dir, texts, {'好': 4.0, '坏': -4.0}, default_min_score=None)
+	kb = kb_factory(DOCS, config=yaml_config(rerank={'model_dir': str(model_dir), 'min_score': 0.9}))
+	assert [hit.doc_id for hit in search(kb, '篇').results] == ['甲.md']
+
+
+def test_meta_without_default_min_score_needs_a_threshold(kb_factory, tmp_path):
+	from axc_wensuo.errors import ConfigError
+
+	texts = [path + text for path, text in DOCS.items()] + ['好', '坏', '篇']
+	model_dir = tmp_path / 'rerank-no-default'
+	make_reranker_dir(model_dir, texts, {'好': 4.0, '坏': -4.0}, default_min_score=None)
+	kb = kb_factory(DOCS, config=yaml_config(rerank={'model_dir': str(model_dir)}))
+	with pytest.raises(ConfigError, match='default_min_score'):
+		search(kb, '篇')
+	assert [hit.doc_id for hit in search(kb, '篇', min_score=0.9).results] == ['甲.md']

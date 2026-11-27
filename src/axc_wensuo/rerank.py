@@ -11,7 +11,7 @@ import numpy as np
 from axc_wensuo.errors import WenSuoRuntimeError
 from axc_wensuo.hashing import file_sha256
 
-REQUIRED_META_FIELDS = ('max_length', 'temperature', 'bias', 'default_min_score')
+REQUIRED_META_FIELDS = ('max_length', 'temperature', 'bias')
 
 
 @dataclass(frozen=True)
@@ -21,7 +21,7 @@ class RerankMeta:
 	passage_chars: int
 	temperature: float
 	bias: float
-	default_min_score: float
+	default_min_score: float | None  # None: threshold must come from config or call. None 时阈值必须由配置或参数给出。
 
 def load_rerank_meta(model_dir: str | Path) -> RerankMeta:
 	directory = Path(model_dir)
@@ -42,10 +42,10 @@ def load_rerank_meta(model_dir: str | Path) -> RerankMeta:
 	passage_chars = _positive_int(data.get('passage_chars', 320), 'passage_chars')
 	temperature = _number(data['temperature'], 'temperature')
 	bias = _number(data['bias'], 'bias')
-	default_min_score = _number(data['default_min_score'], 'default_min_score')
+	default_min_score = _number(data['default_min_score'], 'default_min_score') if 'default_min_score' in data else None
 	if temperature == 0:
 		raise WenSuoRuntimeError('重排模型 model_meta.json 的 temperature 不能为 0')
-	if not 0 <= default_min_score <= 1:
+	if default_min_score is not None and not 0 <= default_min_score <= 1:
 		raise WenSuoRuntimeError('重排模型 model_meta.json 的 default_min_score 必须在 [0, 1] 内')
 	return RerankMeta(
 		max_length=max_length,
