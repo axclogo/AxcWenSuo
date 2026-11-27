@@ -38,7 +38,7 @@ jobs:
         shell: bash
         # Failed test ids become annotations, readable without signing in. 失败用例写成注解，不登录也能看到。
         run: |
-          set -o pipefail
+          set +e -o pipefail
           uv run pytest -q -rfE --tb=line -p no:cacheprovider | tee pytest.log
           status=${PIPESTATUS[0]}
           if [ "$status" != "0" ]; then
