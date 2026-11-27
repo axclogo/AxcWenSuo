@@ -17,7 +17,8 @@ from tokenizers import Regex, Tokenizer, models, pre_tokenizers
 def write(root: Path, relative: str, content: str, *, encoding: str = 'utf-8') -> Path:
 	path = Path(root) / relative
 	path.parent.mkdir(parents=True, exist_ok=True)
-	path.write_text(content, encoding=encoding)
+	# newline='' keeps LF on Windows so line-based assertions hold. 保持 LF，Windows 上行号断言才成立。
+	path.write_text(content, encoding=encoding, newline='')
 	return path
 
 def _vocab(texts: list[str]) -> dict[str, int]:
